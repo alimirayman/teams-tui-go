@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/net/html"
 )
 
@@ -459,26 +460,8 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 			tag := token.Data
 			switch tag {
 			case "img":
-				// Extract src and alt.
-				var src, alt string
-				for _, a := range token.Attr {
-					switch a.Key {
-					case "src":
-						src = a.Val
-					case "alt":
-						alt = a.Val
-					}
-				}
-				label := alt
-				if label == "" && src != "" {
-					// Use filename from src if alt is empty.
-					parts := strings.Split(src, "/")
-					label = parts[len(parts)-1]
-				}
-				if label == "" {
-					label = "Pasted Image"
-				}
-				sb.WriteString("[IMG:" + label + "]")
+				orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("image")
+				sb.WriteString("🖼️  " + orangeText)
 
 			case "attachment":
 				var attID string
@@ -493,12 +476,8 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 					if att.ContentType != nil && *att.ContentType == "messageReference" {
 						continue
 					}
-					icon := getAttachmentIcon(att)
-					name := ""
-					if att.Name != nil {
-						name = *att.Name
-					}
-					sb.WriteString(icon + " " + name)
+					orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("Attachment")
+					sb.WriteString("📎 " + orangeText)
 				}
 
 			case "emoji":
