@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -394,15 +395,19 @@ func computeDisplayName(c *Chat) string {
 
 // memberAbbreviations returns up to n abbreviated member display names.
 func memberAbbreviations(members []ChatMember, n int) []string {
-	var out []string
+	var names []string
 	for _, m := range members {
 		if m.DisplayName == nil {
 			continue
 		}
-		out = append(out, abbreviateName(*m.DisplayName))
-		if len(out) >= n {
-			break
-		}
+		names = append(names, abbreviateName(*m.DisplayName))
+	}
+
+	sort.Strings(names)
+
+	var out []string
+	for i := 0; i < len(names) && i < n; i++ {
+		out = append(out, names[i])
 	}
 	return out
 }
