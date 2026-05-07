@@ -138,6 +138,7 @@ func (m Model) Init() tea.Cmd {
 // the new model plus any commands.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	wasInputMode := m.app.InputMode
 
 	switch msg := msg.(type) {
 
@@ -293,7 +294,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Update textarea if in input mode.
-	if m.app.InputMode {
+	if m.app.InputMode && wasInputMode {
 		var cmd tea.Cmd
 		m.textarea, cmd = m.textarea.Update(msg)
 		cmds = append(cmds, cmd)
@@ -391,7 +392,7 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, sendMessageCmd(m.clientID, chat.ID, content)
 
 	case "alt+enter", "shift+enter", "ctrl+enter":
-		// Bubble Tea textarea handles newlines internally; we just allow it.
+		m.textarea.InsertString("\n")
 		return m, nil
 	}
 
@@ -418,20 +419,20 @@ func (m Model) View() string {
 	}
 
 	chatPanel := m.renderChatList(chatW-2, innerH)
-	msgPanel := m.renderMessages(msgW-2, innerH)
-	statusBar := m.renderStatusBar(m.width)
+	
+	right := m.renderRightPanel(msgW-2, innerH)
 
 	left := normalBorder.Width(chatW - 2).Height(innerH).Render(chatPanel)
-	right := m.renderRightPanel(msgW-2, innerH, msgPanel)
 
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	return lipgloss.JoinVertical(lipgloss.Left, top, statusBar)
+	return lipgloss.JoinVertical(lipgloss.Left, top, m.renderStatusBar(m.width))
 }
 
 // renderRightPanel renders the messages panel (with optional input area).
-func (m Model) renderRightPanel(w, h int, msgContent string) string {
+func (m Model) renderRightPanel(w, h int) string {
 	if !m.app.InputMode {
 		title := "Messages (i to compose, PgUp(K)/PgDn(J) to scroll)"
+		msgContent := m.renderMessages(w, h-1)
 		return normalBorder.Width(w).Height(h).
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(colGreen).
@@ -448,18 +449,19 @@ func (m Model) renderRightPanel(w, h int, msgContent string) string {
 		msgH = 1
 	}
 
+	msgContent := m.renderMessages(w, msgH-1)
 	msgBox := normalBorder.Width(w).Height(msgH).
 		Render(lipgloss.JoinVertical(lipgloss.Left,
 			lipgloss.NewStyle().Foreground(colDimGray).Render("Messages (ESC to cancel)"),
-			m.renderMessages(w-2, msgH-1),
+			msgContent,
 		))
 
-	m.textarea.SetWidth(w - 2)
+	m.textarea.SetWidth(w)
 	m.textarea.SetHeight(inputH - 2)
 	inputBox := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colGreen).
-		Width(w).
+		Width(w).Height(inputH - 1).
 		Render(lipgloss.JoinVertical(lipgloss.Left,
 			lipgloss.NewStyle().Foreground(colDimGray).
 				Render("Type your message (Enter to send, Alt+Enter for new line, ESC to cancel)"),
@@ -481,30 +483,49 @@ func (m Model) renderChatList(w, h int) string {
 		return lipgloss.JoinVertical(lipgloss.Left, title, m.app.Status)
 	}
 
+	visibleCount := h - 1
+	if visibleCount < 1 {
+		visibleCount = 1
+	}
+
+	if m.app.SelectedIndex < m.app.ChatScrollOffset {
+		m.app.ChatScrollOffset = m.app.SelectedIndex
+	} else if m.app.SelectedIndex >= m.app.ChatScrollOffset+visibleCount {
+		m.app.ChatScrollOffset = m.app.SelectedIndex - visibleCount + 1
+	}
+
 	lines := []string{title}
-	for i, c := range m.app.Chats {
+	
+	start := m.app.ChatScrollOffset
+	end := start + visibleCount
+	if end > len(m.app.Chats) {
+		end = len(m.app.Chats)
+	}
+
+	for i := start; i < end; i++ {
+		c := m.app.Chats[i]
 		chatType := c.ChatType
 		displayName := ""
 		if c.CachedDisplayName != nil {
 			displayName = *c.CachedDisplayName
 		}
 
-		// Format: [chatType] displayName
-		typeTag := lipgloss.NewStyle().Foreground(colCyan).Render("[" + chatType + "]")
-		label := typeTag + " " + truncate(displayName, w-len(chatType)-4)
+		labelStr := "[" + chatType + "] " + displayName
 
+		var label string
 		if i == m.app.SelectedIndex {
 			label = lipgloss.NewStyle().
 				Foreground(colYellow).
 				Bold(true).
 				Background(colDarkGray).
 				Width(w).
-				Render("[" + chatType + "] " + truncate(displayName, w-len(chatType)-4))
+				MaxWidth(w).
+				Render(labelStr)
+		} else {
+			typeTag := lipgloss.NewStyle().Foreground(colCyan).Render("[" + chatType + "]")
+			label = lipgloss.NewStyle().MaxWidth(w).Render(typeTag + " " + displayName)
 		}
 		lines = append(lines, label)
-		if len(lines) >= h {
-			break
-		}
 	}
 
 	return strings.Join(lines, "\n")
@@ -662,8 +683,7 @@ func truncate(s string, maxLen int) string {
 
 // padLeft right-aligns text within width w by prepending spaces.
 func padLeft(s string, w int) string {
-	visLen := utf8.RuneCountInString(lipgloss.NewStyle().Render(s)) // approximate
-	visLen = utf8.RuneCountInString(s)
+	visLen := lipgloss.Width(s)
 	pad := w - visLen
 	if pad <= 0 {
 		return s

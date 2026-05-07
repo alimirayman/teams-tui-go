@@ -106,10 +106,11 @@ type chatTimestamp struct {
 
 // loadInitialChatOrder concurrently fetches the last message for each chat
 // and returns the chats sorted by most recent message timestamp (descending).
-func loadInitialChatOrder(accessToken string, chats []Chat) []Chat {
+func loadInitialChatOrder(accessToken string, chats []Chat) ([]Chat, map[string]string) {
 	type result struct {
 		index     int
 		latestMsg time.Time
+		lastMsgID string
 	}
 
 	results := make([]result, len(chats))
@@ -126,15 +127,32 @@ func loadInitialChatOrder(accessToken string, chats []Chat) []Chat {
 				if c.LastUpdated != nil {
 					t, _ = time.Parse(time.RFC3339Nano, *c.LastUpdated)
 				}
-				results[i] = result{i, t}
+				results[i] = result{i, t, ""}
 				return
 			}
 			// API returns newest first; use the first element.
 			latest, _ := time.Parse(time.RFC3339Nano, msgs[0].CreatedDateTime)
-			results[i] = result{i, latest}
+			
+			// If LastUpdated is newer, use it for sorting (e.g. chat renamed, members changed)
+			t := time.Time{}
+			if c.LastUpdated != nil {
+				t, _ = time.Parse(time.RFC3339Nano, *c.LastUpdated)
+			}
+			if t.After(latest) {
+				latest = t
+			}
+
+			results[i] = result{i, latest, msgs[0].ID}
 		}(i, c)
 	}
 	wg.Wait()
+
+	lastMsgIDs := make(map[string]string)
+	for i, c := range chats {
+		if results[i].lastMsgID != "" {
+			lastMsgIDs[c.ID] = results[i].lastMsgID
+		}
+	}
 
 	// Sort by latest message timestamp descending.
 	sort.Slice(chats, func(a, b int) bool {
@@ -152,7 +170,7 @@ func loadInitialChatOrder(accessToken string, chats []Chat) []Chat {
 		return ta.After(tb)
 	})
 
-	return chats
+	return chats, lastMsgIDs
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +208,8 @@ func main() {
 	fmt.Printf("✓ Loaded %d chats\n", len(chats))
 
 	// 5 & 6. Sort chats by most recent message.
-	chats = loadInitialChatOrder(accessToken, chats)
+	var lastMsgIDs map[string]string
+	chats, lastMsgIDs = loadInitialChatOrder(accessToken, chats)
 
 	// 7 & 8. Initialise application state.
 	app := NewApp()
@@ -208,6 +227,7 @@ func main() {
 	// Build initial stable chat order.
 	model := NewModel(app, clientID, me.ID)
 	model.latestChats = chats
+	model.lastMsgID = lastMsgIDs
 	stableOrder := make([]string, len(chats))
 	for i, c := range chats {
 		stableOrder[i] = c.ID

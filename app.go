@@ -77,6 +77,7 @@ type App struct {
 	InputBuffer     string
 	ScrollOffset    int
 	MaxScroll       int
+	ChatScrollOffset int
 	SnapToBottom    bool
 	NotificationMode NotificationMode
 	VisualBellUntil *time.Time
