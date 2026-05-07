@@ -33,6 +33,15 @@ Authenticates via **OAuth2 Device Code Flow** (no browser redirect needed), fetc
 git clone https://github.com/nospor/teams-tui-go
 cd teams-tui-go
 go build -o teams-tui-go .
+
+# or (builds slower, but binary is smaller)
+go build -trimpath -ldflags="-s -w" -o teams-tui-go .
+
+# then run
+./teams-tui-go
+
+# you may also want to copy the binary to your PATH (and run it from any place), e.g.:
+sudo cp teams-tui-go /usr/local/bin/
 ```
 
 ### Install to PATH
@@ -130,3 +139,6 @@ go vet ./...
 ## License
 
 See [LICENSE](LICENSE).
+
+## Thanks For Visiting
+Hope you liked it. Wanna **[buy Me a coffee](https://www.buymeacoffee.com/nospor)**?
