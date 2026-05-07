@@ -154,10 +154,19 @@ func loadInitialChatOrder(accessToken string, chats []Chat) ([]Chat, map[string]
 		}
 	}
 
+	type chatWithResult struct {
+		chat Chat
+		res  result
+	}
+	combined := make([]chatWithResult, len(chats))
+	for i, c := range chats {
+		combined[i] = chatWithResult{c, results[i]}
+	}
+
 	// Sort by latest message timestamp descending.
-	sort.Slice(chats, func(a, b int) bool {
-		ta := results[a].latestMsg
-		tb := results[b].latestMsg
+	sort.Slice(combined, func(a, b int) bool {
+		ta := combined[a].res.latestMsg
+		tb := combined[b].res.latestMsg
 		if ta.IsZero() && tb.IsZero() {
 			return false
 		}
@@ -169,6 +178,10 @@ func loadInitialChatOrder(accessToken string, chats []Chat) ([]Chat, map[string]
 		}
 		return ta.After(tb)
 	})
+
+	for i, cw := range combined {
+		chats[i] = cw.chat
+	}
 
 	return chats, lastMsgIDs
 }
