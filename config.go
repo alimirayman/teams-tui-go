@@ -16,8 +16,10 @@ const defaultClientID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
 
 // Config holds persistent application settings.
 type Config struct {
-	ClientID         *string           `json:"client_id,omitempty"`
-	NotificationMode *NotificationMode `json:"notification_mode,omitempty"`
+	ClientID                *string           `json:"client_id,omitempty"`
+	NotificationMode        *NotificationMode `json:"notification_mode,omitempty"`
+	NotificationShowPreview *bool             `json:"notification_show_preview,omitempty"`
+	NotificationPreviewLen  *int              `json:"notification_preview_len,omitempty"`
 }
 
 // GetAppDir returns ~/.config/teams-tui-go/, creating it if necessary.

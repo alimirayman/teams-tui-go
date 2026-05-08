@@ -80,6 +80,8 @@ type App struct {
 	ChatScrollOffset int
 	SnapToBottom    bool
 	NotificationMode NotificationMode
+	NotificationShowPreview bool
+	NotificationPreviewLen  int
 	VisualBellUntil *time.Time
 }
 
@@ -87,8 +89,10 @@ type App struct {
 func NewApp() *App {
 	return &App{
 		Status:           "Loading...",
-		SnapToBottom:     true,
-		NotificationMode: NotificationNone,
+		SnapToBottom:            true,
+		NotificationMode:        NotificationNone,
+		NotificationShowPreview: false,
+		NotificationPreviewLen:  50,
 	}
 }
 

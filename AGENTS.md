@@ -18,7 +18,7 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 ### Configuration (`config.go`)
 - App data: `~/.config/teams-tui-go/` (via `GetAppDir()`)
 - Cache: `~/.cache/teams-tui-go/` (via `GetCacheDir()`)
-- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`
+- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`, `NotificationShowPreview *bool`, `NotificationPreviewLen *int`
 - `ResolveClientID()` implements the full precedence chain
 
 ### API Layer (`api.go`)
@@ -27,6 +27,7 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 - **Name Abbreviation**: Group chat members shown as "FirstName LastInitial" (`abbreviateName()`)
 - **Filtering**: Current user is automatically filtered from all member lists by name match (not by ID — IDs vary per chat)
 - **HTMLToText**: Uses `golang.org/x/net/html` tokenizer for robust HTML-to-text conversion, handling `<img>`, `<attachment>`, `<emoji>`, block elements, HTML entities
+- **Read State**: `Chat` includes `Viewpoint` containing `LastMessageReadDateTime` from the server
 - **Silent errors**: `GetChatMembers()` returns empty slice on error; `MarkChatAsRead()` silently ignores all errors
 
 ### Application State (`app.go`)
@@ -41,6 +42,12 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 - Stable chat ordering maintained in `stableChatOrder []string` (list of chat IDs)
   - Only changes when a new message arrives (chat → position 0) or a brand-new chat is added
   - On every API refresh the display list is **rebuilt** from `stableChatOrder`
+- **Read Logic**:
+  - `lastMsgID` and `lastMsgTime` track latest content
+  - `lastReadMsgID` tracks what was read locally in this session
+  - `isUnread(chat)` compares latest message time with server viewpoint and local read state
+  - `markRead()` triggers `MarkChatAsRead` API on focus, selection change, or key press
+- **Focus Tracking**: Terminal focus reporting enabled via `\x1b[?1004h`; `tea.FocusMsg`/`BlurMsg` update `focused` state
 - Background tasks issued as Bubble Tea `Cmd` functions returning typed messages (`MsgChatsLoaded`, `MsgMessagesLoaded`, `MsgNewMessage`, `MsgTick`, `MsgSendDone`)
 
 ### Main / Entry Point (`main.go`)

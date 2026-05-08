@@ -271,7 +271,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Message.From != nil && msg.Message.From.User != nil && msg.Message.From.User.DisplayName != nil {
 			senderName = *msg.Message.From.User.DisplayName
 		}
-		m.notify(senderName)
+		m.notify(senderName, msg.Message)
 
 		// Move chat to top.
 		m.promoteChat(msg.ChatID)
@@ -897,16 +897,29 @@ func (m Model) rebuildChatList() Model {
 // ---------------------------------------------------------------------------
 
 // notify triggers the appropriate notification based on the app's mode.
-func (m *Model) notify(senderName string) {
-	mode := m.app.NotificationMode
-	if mode == NotificationNone {
-		return
+func (m *Model) notify(senderName string, msg Message) {
+	body := ""
+	if m.app.NotificationShowPreview {
+		if msg.Body != nil && msg.Body.Content != nil {
+			body = HTMLToText(*msg.Body.Content, msg.Attachments)
+			// Remove newlines and collapse spaces for a cleaner notification body.
+			body = strings.ReplaceAll(body, "\n", " ")
+			body = strings.Join(strings.Fields(body), " ")
+			if m.app.NotificationPreviewLen > 0 && utf8.RuneCountInString(body) > m.app.NotificationPreviewLen {
+				body = string([]rune(body)[:m.app.NotificationPreviewLen]) + "..."
+			}
+		}
 	}
-	if mode == NotificationConsole || mode == NotificationBoth {
-		fmt.Print("\a") // BEL character
+
+	switch m.app.NotificationMode {
+	case NotificationConsole:
+		fmt.Print("\a") // BEL
 		m.app.TriggerVisualBell()
-	}
-	if mode == NotificationSystem || mode == NotificationBoth {
-		go sendDesktopNotification(senderName)
+	case NotificationSystem:
+		go sendDesktopNotification(senderName, body)
+	case NotificationBoth:
+		fmt.Print("\a")
+		m.app.TriggerVisualBell()
+		go sendDesktopNotification(senderName, body)
 	}
 }

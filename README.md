@@ -14,6 +14,7 @@ Authenticates via **OAuth2 Device Code Flow** (no browser redirect needed), fetc
 - ✏️ Send messages, including multiline via Alt+Enter
 - 🔔 Notification modes: None / Console (BEL + visual bell) / System (desktop) / Both
 - 🔄 Background polling — chats and messages refresh automatically every ~3 s
+- 🔵 Unread Indicators — chats with new messages are marked with a dot (●) and bold text
 - ⬆️ New messages bubble chats to the top of the list
 - 📌 Stable chat ordering — order only changes when new messages arrive
 - 💾 Token persistence — only authenticate once; tokens refresh automatically
@@ -74,9 +75,19 @@ By default the app uses Microsoft's public Teams client ID. To use your own Azur
    }
    ```
 
-### Notification Mode
+### Notifications
+- **Toggle Mode**: Cycle through notification modes at runtime by pressing `n`. The chosen mode is automatically saved.
+- **Message Previews**: Configure desktop notifications in `~/.config/teams-tui-go/config.json`:
 
-Cycle through notification modes at runtime by pressing `n`. The chosen mode is automatically saved to `~/.config/teams-tui-go/config.json`.
+  ```json
+  {
+    "notification_mode": "System",
+    "notification_show_preview": true,
+    "notification_preview_len": 80
+  }
+  ```
+  - `notification_show_preview`: Set to `true` to include the message content in the desktop notification.
+  - `notification_preview_len`: The maximum number of characters to show in the preview.
 
 ---
 

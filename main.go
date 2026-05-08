@@ -84,13 +84,19 @@ func sendMessageCmd(clientID, chatID, content string) tea.Cmd {
 // ---------------------------------------------------------------------------
 
 // sendDesktopNotification sends a native desktop notification.
-func sendDesktopNotification(senderName string) {
-	body := "New message"
+func sendDesktopNotification(senderName string, body string) {
+	title := "TeamsTUI: New Message"
 	if senderName != "" {
-		body = "New message from " + senderName
+		title = "TeamsTUI: " + senderName
 	}
+	
+	finalBody := "New message received"
+	if body != "" {
+		finalBody = body
+	}
+	
 	beeep.AppName = "TeamsTUI"
-	_ = beeep.Notify("TeamsTUI", body, "")
+	_ = beeep.Notify(title, finalBody, "")
 }
 
 // ---------------------------------------------------------------------------
@@ -238,9 +244,17 @@ func main() {
 	}
 	app.CurrentUserID = me.ID
 
-	// Load persisted notification mode.
-	if cfg := LoadConfig(); cfg != nil && cfg.NotificationMode != nil {
-		app.NotificationMode = *cfg.NotificationMode
+	// Load persisted notification mode and settings.
+	if cfg := LoadConfig(); cfg != nil {
+		if cfg.NotificationMode != nil {
+			app.NotificationMode = *cfg.NotificationMode
+		}
+		if cfg.NotificationShowPreview != nil {
+			app.NotificationShowPreview = *cfg.NotificationShowPreview
+		}
+		if cfg.NotificationPreviewLen != nil {
+			app.NotificationPreviewLen = *cfg.NotificationPreviewLen
+		}
 	}
 
 	// Build initial stable chat order.
