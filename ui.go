@@ -576,6 +576,7 @@ func (m Model) renderMessages(w, h int) string {
 		}
 
 		msgTime, _ := time.Parse(time.RFC3339Nano, msg.CreatedDateTime)
+		msgTime = msgTime.Local()
 		senderChanged := sender != prevSender
 		timeGap := !msgTime.IsZero() && !prevTime.IsZero() && msgTime.Hour() != prevTime.Hour()
 
