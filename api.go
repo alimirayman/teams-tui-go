@@ -18,6 +18,7 @@ import (
 )
 
 const graphAPIBase = "https://graph.microsoft.com/v1.0"
+const graphAPIBeta = "https://graph.microsoft.com/beta"
 
 // ---------------------------------------------------------------------------
 // Data models
@@ -185,6 +186,57 @@ func graphPost(accessToken, path string, payload any) error {
 	return nil
 }
 
+// graphPatch performs an authenticated PATCH request against the Graph API.
+func graphPatch(accessToken, path string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPatch, graphAPIBase+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("PATCH %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PATCH %s: HTTP %d: %s", path, resp.StatusCode, body)
+	}
+	return nil
+}
+
+// graphDelete performs an authenticated DELETE request against the Graph API.
+func graphDelete(accessToken, path string, useBeta bool) error {
+	base := graphAPIBase
+	if useBeta {
+		base = graphAPIBeta
+	}
+	req, err := http.NewRequest(http.MethodDelete, base+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("DELETE %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("DELETE %s: HTTP %d: %s", path, resp.StatusCode, body)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // GetMe — current user profile with cache
 // ---------------------------------------------------------------------------
@@ -323,6 +375,18 @@ func UnsetReaction(accessToken, chatID, messageID, reactionType string) error {
 		"reactionType": reactionType,
 	}
 	return graphPost(accessToken, "/chats/"+chatID+"/messages/"+messageID+"/unsetReaction", payload)
+}
+
+// DeleteMessage removes a message from a chat.
+func DeleteMessage(accessToken, chatID, messageID string) error {
+	// The Graph API does not support true DELETE for chat messages.
+	// We perform a "soft delete" by updating the content to a placeholder.
+	payload := map[string]any{
+		"body": map[string]any{
+			"content": "*(deleted)*",
+		},
+	}
+	return graphPatch(accessToken, "/chats/"+chatID+"/messages/"+messageID, payload)
 }
 
 // ---------------------------------------------------------------------------

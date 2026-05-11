@@ -82,6 +82,7 @@ type App struct {
 	MessageSelectedIndex int
 	MessageSelectionMode bool
 	ReactionMode         bool
+	DeleteConfirmMode    bool
 	NotificationMode NotificationMode
 	NotificationShowPreview bool
 	NotificationPreviewLen  int

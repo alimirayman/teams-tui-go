@@ -108,31 +108,32 @@ On first run (or after token expiry) you will be prompted to visit a URL and ent
 
 ## Keyboard Controls
 
-| Key | Action |
-|-----|--------|
-| `↑` / `k` | Move up in chat list |
-| `↓` / `j` | Move down in chat list |
-| `PgUp` / `K` | Scroll messages up |
-| `PgDn` / `J` | Scroll messages down |
-| `i` | Enter compose mode |
-| `Enter` | Send message |
-| `Alt+Enter` | New line in message |
-| `Esc` | Cancel compose |
-| `n` | Toggle notification mode |
-| `m` | Enter/Exit **Message Mode** (to select/react) |
-| `r` | React to selected message (in Message Mode) |
-| `1-6` | Send reaction (in Reaction Mode) |
-| `q` | Quit |
+| Key          | Action                                               |
+| ------------ | ---------------------------------------------------- |
+| `↑` / `k`    | Move up in chat list                                 |
+| `↓` / `j`    | Move down in chat list                               |
+| `PgUp` / `K` | Scroll messages up                                   |
+| `PgDn` / `J` | Scroll messages down                                 |
+| `i`          | Enter compose mode                                   |
+| `Enter`      | Send message                                         |
+| `Alt+Enter`  | New line in message                                  |
+| `Esc`        | Cancel compose                                       |
+| `n`          | Toggle notification mode                             |
+| `m`          | Enter/Exit **Message Mode** (to select/react/delete) |
+| `r`          | React to selected message (in Message Mode)          |
+| `d`          | Delete selected message (in Message Mode)            |
+| `1-6`        | Send reaction (in Reaction Mode)                     |
+| `q`          | Quit                                                 |
 
 ---
 
 ## File Locations
 
-| File | Purpose |
-|------|---------|
-| `~/.config/teams-tui-go/config.json` | Client ID, notification mode |
-| `~/.cache/teams-tui-go/token.json` | OAuth2 access + refresh tokens |
-| `~/.cache/teams-tui-go/profile.json` | Cached user profile |
+| File                                 | Purpose                        |
+| ------------------------------------ | ------------------------------ |
+| `~/.config/teams-tui-go/config.json` | Client ID, notification mode   |
+| `~/.cache/teams-tui-go/token.json`   | OAuth2 access + refresh tokens |
+| `~/.cache/teams-tui-go/profile.json` | Cached user profile            |
 
 ---
 
