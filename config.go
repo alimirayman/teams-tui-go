@@ -20,6 +20,7 @@ type Config struct {
 	NotificationMode        *NotificationMode `json:"notification_mode,omitempty"`
 	NotificationShowPreview *bool             `json:"notification_show_preview,omitempty"`
 	NotificationPreviewLen  *int              `json:"notification_preview_len,omitempty"`
+	MessageLimit            *int              `json:"message_limit,omitempty"`
 }
 
 // GetAppDir returns ~/.config/teams-tui-go/, creating it if necessary.
@@ -95,4 +96,15 @@ func ResolveClientID() string {
 		return *cfg.ClientID
 	}
 	return defaultClientID
+}
+
+// ResolveMessageLimit returns the number of messages to fetch, using precedence:
+//  1. config.json -> message_limit
+//  2. Default (50)
+func ResolveMessageLimit() int {
+	cfg := LoadConfig()
+	if cfg != nil && cfg.MessageLimit != nil && *cfg.MessageLimit > 0 {
+		return *cfg.MessageLimit
+	}
+	return 50
 }

@@ -90,6 +90,16 @@ By default the app uses Microsoft's public Teams client ID. To use your own Azur
   - `notification_show_preview`: Set to `true` to include the message content in the desktop notification.
   - `notification_preview_len`: The maximum number of characters to show in the preview.
 
+### Message Limit
+Configure how many messages to fetch when opening a chat in `~/.config/teams-tui-go/config.json`:
+
+  ```json
+  {
+    "message_limit": 50
+  }
+  ```
+  - `message_limit`: The number of messages to fetch (default: 50).
+
 ---
 
 ## Usage

@@ -44,7 +44,7 @@ func loadMessagesCmd(clientID, chatID string, chatIndex int) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		msgs, err := GetMessages(token, chatID)
+		msgs, err := GetMessages(token, chatID, ResolveMessageLimit())
 		if err != nil {
 			return nil
 		}
@@ -59,7 +59,7 @@ func checkNewMessageCmd(clientID, chatID string) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		msgs, err := GetMessages(token, chatID)
+		msgs, err := GetMessages(token, chatID, 1)
 		if err != nil || len(msgs) == 0 {
 			return nil
 		}
@@ -163,7 +163,7 @@ func loadInitialChatOrder(accessToken string, chats []Chat) ([]Chat, map[string]
 		wg.Add(1)
 		go func(i int, c Chat) {
 			defer wg.Done()
-			msgs, err := GetMessages(accessToken, c.ID)
+			msgs, err := GetMessages(accessToken, c.ID, 1)
 			if err != nil || len(msgs) == 0 {
 				// Fallback: use lastUpdatedDateTime.
 				t := time.Time{}

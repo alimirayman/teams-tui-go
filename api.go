@@ -293,8 +293,12 @@ func GetChatMembers(accessToken, chatID string) []ChatMember {
 // ---------------------------------------------------------------------------
 
 // GetMessages returns the messages in a chat (newest first from the API).
-func GetMessages(accessToken, chatID string) ([]Message, error) {
-	body, err := graphGet(accessToken, "/chats/"+chatID+"/messages")
+func GetMessages(accessToken, chatID string, top int) ([]Message, error) {
+	url := "/chats/" + chatID + "/messages?$orderby=createdDateTime%20desc"
+	if top > 0 {
+		url += fmt.Sprintf("&$top=%d", top)
+	}
+	body, err := graphGet(accessToken, url)
 	if err != nil {
 		return nil, fmt.Errorf("GetMessages: %w", err)
 	}
