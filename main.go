@@ -44,11 +44,26 @@ func loadMessagesCmd(clientID, chatID string, chatIndex int) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		msgs, err := GetMessages(token, chatID, ResolveMessageLimit())
+		msgs, next, err := GetMessages(token, chatID, ResolveMessageLimit())
 		if err != nil {
 			return nil
 		}
-		return MsgMessagesLoaded{ChatIndex: chatIndex, Messages: msgs}
+		return MsgMessagesLoaded{ChatIndex: chatIndex, Messages: msgs, NextLink: next}
+	}
+}
+
+// loadMoreMessagesCmd fetches the next page of messages using a nextLink.
+func loadMoreMessagesCmd(clientID, nextLink string, chatIndex int) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return nil
+		}
+		msgs, next, err := GetMessagesFromLink(token, nextLink)
+		if err != nil {
+			return nil
+		}
+		return MsgMoreMessagesLoaded{ChatIndex: chatIndex, Messages: msgs, NextLink: next}
 	}
 }
 
@@ -59,7 +74,7 @@ func checkNewMessageCmd(clientID, chatID string) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		msgs, err := GetMessages(token, chatID, 1)
+		msgs, _, err := GetMessages(token, chatID, 1)
 		if err != nil || len(msgs) == 0 {
 			return nil
 		}
@@ -163,7 +178,7 @@ func loadInitialChatOrder(accessToken string, chats []Chat) ([]Chat, map[string]
 		wg.Add(1)
 		go func(i int, c Chat) {
 			defer wg.Done()
-			msgs, err := GetMessages(accessToken, c.ID, 1)
+			msgs, _, err := GetMessages(accessToken, c.ID, 1)
 			if err != nil || len(msgs) == 0 {
 				// Fallback: use lastUpdatedDateTime.
 				t := time.Time{}

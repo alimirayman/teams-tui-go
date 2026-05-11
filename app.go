@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -88,6 +89,8 @@ type App struct {
 	NotificationPreviewLen  int
 	VisualBellUntil *time.Time
 	StatusUntil     *time.Time
+	NextLink        string
+	PendingScrollID string
 }
 
 // NewApp creates an App with sensible initial defaults.
@@ -112,31 +115,72 @@ func (a *App) SetCurrentUser(name string) {
 	a.CurrentUserName = &name
 }
 
-// SetMessages replaces the current message list and clears the loading flag.
-func (a *App) SetMessages(messages []Message) {
-	oldMsgs := a.Messages
-	a.Messages = messages
-	a.LoadingMessages = false
+// SetMessages updates the current message list, merging new messages with existing ones.
+func (a *App) SetMessages(messages []Message, nextLink string) {
+	if len(a.Messages) == 0 {
+		a.Messages = messages
+		a.NextLink = nextLink
+		a.LoadingMessages = false
+		return
+	}
+
+	// Create a map of existing messages by ID.
+	m := make(map[string]Message)
+	for _, msg := range a.Messages {
+		m[msg.ID] = msg
+	}
+	// Overwrite/add with fresh messages.
+	for _, msg := range messages {
+		m[msg.ID] = msg
+	}
+
+	result := make([]Message, 0, len(m))
+	for _, msg := range m {
+		result = append(result, msg)
+	}
+
+	// Sort newest first.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedDateTime > result[j].CreatedDateTime
+	})
 
 	// Maintain selection by ID if in message selection mode.
-	if a.MessageSelectionMode && len(oldMsgs) > 0 && a.MessageSelectedIndex < len(oldMsgs) {
-		selectedID := oldMsgs[a.MessageSelectedIndex].ID
-		for i, m := range messages {
+	if a.MessageSelectionMode && len(a.Messages) > 0 && a.MessageSelectedIndex < len(a.Messages) {
+		selectedID := a.Messages[a.MessageSelectedIndex].ID
+		a.Messages = result // set here so we can find index in new list
+		for i, m := range result {
 			if m.ID == selectedID {
 				a.MessageSelectedIndex = i
-				return
+				goto done
 			}
 		}
 	}
 
+	a.Messages = result
+
+done:
 	// Clamp index if message was deleted or we're out of bounds.
-	if a.MessageSelectedIndex >= len(messages) {
-		if len(messages) > 0 {
-			a.MessageSelectedIndex = len(messages) - 1
+	if a.MessageSelectedIndex >= len(a.Messages) {
+		if len(a.Messages) > 0 {
+			a.MessageSelectedIndex = len(a.Messages) - 1
 		} else {
 			a.MessageSelectedIndex = 0
 		}
 	}
+
+	// Only update NextLink if it's currently empty (e.g. first successful load).
+	// If we already have a NextLink, it points to the older history we've reached.
+	if a.NextLink == "" {
+		a.NextLink = nextLink
+	}
+	a.LoadingMessages = false
+}
+
+// AppendOlderMessages adds older messages to the end of the current list.
+func (a *App) AppendOlderMessages(messages []Message, nextLink string) {
+	a.Messages = append(a.Messages, messages...)
+	a.NextLink = nextLink
+	a.LoadingMessages = false
 }
 
 // SetLoadingMessages toggles the loading indicator.

@@ -54,6 +54,14 @@ type MsgChatsLoaded struct {
 type MsgMessagesLoaded struct {
 	ChatIndex int
 	Messages  []Message
+	NextLink  string
+}
+
+// MsgMoreMessagesLoaded is sent when older messages are loaded via pagination.
+type MsgMoreMessagesLoaded struct {
+	ChatIndex int
+	Messages  []Message
+	NextLink  string
 }
 
 // MsgNewMessage signals that a new message arrived in a non-selected chat.
@@ -237,7 +245,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only update if content changed.
 		if !messagesEqual(prev, msg.Messages) {
 			isNewMessage := len(prev) == 0 || (len(msg.Messages) > 0 && prev[0].ID != msg.Messages[0].ID)
-			m.app.SetMessages(msg.Messages)
+			m.app.SetMessages(msg.Messages, msg.NextLink)
 			
 			// Only snap to bottom if a new message arrived and the user isn't 
 			// currently busy selecting/reacting to an older message.
@@ -264,6 +272,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		m.updateScroll()
+
+	// ── More messages loaded (pagination) ───────────────────────────────
+	case MsgMoreMessagesLoaded:
+		if msg.ChatIndex != m.app.SelectedIndex {
+			break
+		}
+		// Record the oldest message ID to maintain scroll context.
+		if len(m.app.Messages) > 0 {
+			m.app.PendingScrollID = m.app.Messages[len(m.app.Messages)-1].ID
+		}
+		m.app.AppendOlderMessages(msg.Messages, msg.NextLink)
 		m.updateScroll()
 
 	// ── Focus / Blur ─────────────────────────────────────────────────────
@@ -397,6 +417,10 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, m.textarea.Focus()
 
 	case "K", "pgup":
+		if m.app.ScrollOffset == 0 && m.app.NextLink != "" && !m.app.LoadingMessages {
+			m.app.SetLoadingMessages(true)
+			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.app.SelectedIndex)
+		}
 		m.app.ScrollOffset -= 10
 		if m.app.ScrollOffset < 0 {
 			m.app.ScrollOffset = 0
@@ -420,6 +444,7 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	// If chat selection changed, reload messages.
 	if m.app.SelectedIndex != prevIdx {
 		m.app.Messages = nil
+		m.app.NextLink = ""
 		m.app.SetLoadingMessages(true)
 		m.app.SnapToBottom = true
 		if chat := m.app.GetSelectedChat(); chat != nil {
@@ -725,7 +750,7 @@ func (m Model) renderChatList(w, h int) string {
 // ---------------------------------------------------------------------------
 
 func (m Model) renderMessages(w, h int) string {
-	if m.app.LoadingMessages {
+	if m.app.LoadingMessages && len(m.app.Messages) == 0 {
 		return lipgloss.NewStyle().Foreground(colDimGray).Render("Loading messages...")
 	}
 	if len(m.app.Messages) == 0 {
@@ -737,9 +762,6 @@ func (m Model) renderMessages(w, h int) string {
 	// Messages arrive newest-first from API; render newest at the bottom.
 	msgs := m.app.Messages
 	start := 0
-	if len(msgs) > 100 {
-		start = len(msgs) - 100
-	}
 	msgs = msgs[start:]
 
 	var lines []string
@@ -747,10 +769,15 @@ func (m Model) renderMessages(w, h int) string {
 	var prevTime time.Time
 
 	var selectedStartLine, selectedEndLine int = -1, -1
+	var pendingScrollLine int = -1
 
 	// Iterate in reverse (slice is newest-first) → append → shows newest at bottom.
 	for i := len(msgs) - 1; i >= 0; i-- {
 		msg := msgs[i]
+
+		if m.app.PendingScrollID != "" && msg.ID == m.app.PendingScrollID {
+			pendingScrollLine = len(lines)
+		}
 
 		sender := ""
 		if msg.From != nil && msg.From.User != nil && msg.From.User.DisplayName != nil {
@@ -864,6 +891,26 @@ func (m Model) renderMessages(w, h int) string {
 		m.app.ScrollOffset = m.app.MaxScroll
 	}
 
+	// Apply pending scroll jump (pagination context).
+	// Apply pending scroll jump (pagination context).
+	if m.app.PendingScrollID != "" {
+		if pendingScrollLine != -1 {
+			// Jump to where the old top message moved.
+			// "with few line down" -> subtract 3 so the user sees some new context.
+			m.app.ScrollOffset = pendingScrollLine - 3
+			m.app.SnapToBottom = false
+			
+			// Clamp again after jump.
+			if m.app.ScrollOffset < 0 {
+				m.app.ScrollOffset = 0
+			}
+			if m.app.ScrollOffset > m.app.MaxScroll {
+				m.app.ScrollOffset = m.app.MaxScroll
+			}
+		}
+		m.app.PendingScrollID = ""
+	}
+
 	// Slice lines for the visible window.
 	start2 := m.app.ScrollOffset
 	end := start2 + h
@@ -897,6 +944,9 @@ func (m Model) renderStatusBar(w int) string {
 		)
 	}
 	text := fmt.Sprintf("%s | Notification (n): %s", m.app.Status, m.app.NotificationMode)
+	if m.app.LoadingMessages && len(m.app.Messages) > 0 {
+		text = "⏳ Loading older messages... | " + text
+	}
 	if m.app.VisualBellActive() {
 		return bellBorder.Width(w - 2).Height(1).Render(text)
 	}

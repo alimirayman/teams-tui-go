@@ -106,7 +106,8 @@ type membersResponse struct {
 }
 
 type messagesResponse struct {
-	Value []Message `json:"value"`
+	Value    []Message `json:"value"`
+	NextLink *string   `json:"@odata.nextLink,omitempty"`
 }
 
 type orgResponse struct {
@@ -292,29 +293,65 @@ func GetChatMembers(accessToken, chatID string) []ChatMember {
 // GetMessages
 // ---------------------------------------------------------------------------
 
-// GetMessages returns the messages in a chat (newest first from the API).
-func GetMessages(accessToken, chatID string, top int) ([]Message, error) {
+// GetMessages returns the messages in a chat (newest first from the API) and a next link for pagination.
+func GetMessages(accessToken, chatID string, top int) ([]Message, string, error) {
 	url := "/chats/" + chatID + "/messages?$orderby=createdDateTime%20desc"
 	if top > 0 {
 		url += fmt.Sprintf("&$top=%d", top)
 	}
 	body, err := graphGet(accessToken, url)
 	if err != nil {
-		return nil, fmt.Errorf("GetMessages: %w", err)
+		return nil, "", fmt.Errorf("GetMessages: %w", err)
 	}
 	var r messagesResponse
 	if err := json.Unmarshal(body, &r); err != nil {
-		return nil, fmt.Errorf("GetMessages: parse: %w", err)
+		return nil, "", fmt.Errorf("GetMessages: parse: %w", err)
 	}
 
 	// Ensure messages are sorted by creation time (newest first).
-	// This prevents messages from "jumping" if the API returns them in a different
-	// order (e.g. after a reaction updates the lastModifiedDateTime).
 	sort.Slice(r.Value, func(i, j int) bool {
 		return r.Value[i].CreatedDateTime > r.Value[j].CreatedDateTime
 	})
 
-	return r.Value, nil
+	next := ""
+	if r.NextLink != nil {
+		next = *r.NextLink
+	}
+
+	return r.Value, next, nil
+}
+
+// GetMessagesFromLink fetches messages from a full Graph API URL (used for pagination).
+func GetMessagesFromLink(accessToken, nextLink string) ([]Message, string, error) {
+	// nextLink is a full URL, but graphGet expects a path starting with /.
+	// However, graphGetOnce uses graphAPIBase + path.
+	// We should probably add a helper for full URLs or just strip the base.
+	path := nextLink
+	if strings.HasPrefix(path, graphAPIBase) {
+		path = path[len(graphAPIBase):]
+	} else if strings.HasPrefix(path, graphAPIBeta) {
+		path = path[len(graphAPIBeta):]
+	}
+
+	body, err := graphGet(accessToken, path)
+	if err != nil {
+		return nil, "", fmt.Errorf("GetMessagesFromLink: %w", err)
+	}
+	var r messagesResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, "", fmt.Errorf("GetMessagesFromLink: parse: %w", err)
+	}
+
+	sort.Slice(r.Value, func(i, j int) bool {
+		return r.Value[i].CreatedDateTime > r.Value[j].CreatedDateTime
+	})
+
+	next := ""
+	if r.NextLink != nil {
+		next = *r.NextLink
+	}
+
+	return r.Value, next, nil
 }
 
 // ---------------------------------------------------------------------------
