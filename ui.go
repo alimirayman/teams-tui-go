@@ -167,6 +167,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MsgTick:
 		cmds = append(cmds, tickCmd())
 
+		// Clear expired status messages.
+		if m.app.StatusUntil != nil && time.Now().After(*m.app.StatusUntil) {
+			m.app.Status = ""
+			m.app.StatusUntil = nil
+		}
+
 		// Periodic chat refresh every ~3 s.
 		if time.Since(m.lastChatRefresh) >= 3*time.Second {
 			m.lastChatRefresh = time.Now()
@@ -314,7 +320,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Message send result ───────────────────────────────────────────────
 	case MsgSendDone:
 		if msg.Err != nil {
-			m.app.Status = "Send error: " + msg.Err.Error()
+			m.app.SetStatus("Send error: "+msg.Err.Error(), 5*time.Second)
 		} else {
 			// Immediately reload messages after send.
 			if chat := m.app.GetSelectedChat(); chat != nil {
@@ -482,9 +488,9 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			if msgObj.Body != nil && msgObj.Body.Content != nil {
 				text := HTMLToText(*msgObj.Body.Content, msgObj.Attachments)
 				if err := clipboard.WriteAll(text); err == nil {
-					m.app.Status = "Message copied to clipboard"
+					m.app.SetStatus("Message copied to clipboard", 3*time.Second)
 				} else {
-					m.app.Status = "Clipboard error: " + err.Error()
+					m.app.SetStatus("Clipboard error: "+err.Error(), 5*time.Second)
 				}
 			}
 			m.app.MessageSelectionMode = false

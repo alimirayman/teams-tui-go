@@ -87,6 +87,7 @@ type App struct {
 	NotificationShowPreview bool
 	NotificationPreviewLen  int
 	VisualBellUntil *time.Time
+	StatusUntil     *time.Time
 }
 
 // NewApp creates an App with sensible initial defaults.
@@ -103,7 +104,7 @@ func NewApp() *App {
 // SetChats replaces the chat list and updates the status line.
 func (a *App) SetChats(chats []Chat) {
 	a.Chats = chats
-	a.Status = fmt.Sprintf("Loaded %d chats", len(chats))
+	a.SetStatus(fmt.Sprintf("Loaded %d chats", len(chats)), 5*time.Second)
 }
 
 // SetCurrentUser records the detected current user's display name.
@@ -181,4 +182,15 @@ func (a *App) TriggerVisualBell() {
 // VisualBellActive reports whether the visual bell should be showing.
 func (a *App) VisualBellActive() bool {
 	return a.VisualBellUntil != nil && time.Now().Before(*a.VisualBellUntil)
+}
+
+// SetStatus sets the status line, optionally clearing it after duration.
+func (a *App) SetStatus(msg string, duration time.Duration) {
+	a.Status = msg
+	if duration > 0 {
+		t := time.Now().Add(duration)
+		a.StatusUntil = &t
+	} else {
+		a.StatusUntil = nil
+	}
 }
