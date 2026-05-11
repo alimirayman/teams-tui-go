@@ -231,12 +231,8 @@ func GetMessages(accessToken, chatID string) ([]Message, error) {
 
 // SendMessage posts a message to the given chat.
 func SendMessage(accessToken, chatID, content string) error {
-	// Only use <pre> if there's actual indentation.
-	// For simple multi-line, plain text works better and avoids double-spacing issues.
-	hasIndentation := strings.HasPrefix(content, " ") || strings.HasPrefix(content, "\t") ||
-		strings.Contains(content, "\n ") || strings.Contains(content, "\n\t")
-
-	if !hasIndentation {
+	// If it's a single line with no indentation, plain text is fine.
+	if !strings.Contains(content, "\n") && !strings.HasPrefix(content, " ") && !strings.HasPrefix(content, "\t") {
 		payload := map[string]any{
 			"body": map[string]any{
 				"content": content,
@@ -245,10 +241,29 @@ func SendMessage(accessToken, chatID, content string) error {
 		return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
 	}
 
+	// For multi-line or indented content, use HTML with <p> tags per line.
+	// This is the most reliable way to force Teams Web and Desktop to preserve
+	// formatting without the side-effects of <pre> (like monospace font or stripping).
+	lines := strings.Split(content, "\n")
+	var sb strings.Builder
+	for _, l := range lines {
+		if l == "" {
+			sb.WriteString("<p>&nbsp;</p>")
+			continue
+		}
+		sb.WriteString("<p>")
+		// Handle tabs and spaces
+		l = html.EscapeString(l)
+		l = strings.ReplaceAll(l, "\t", "&nbsp;&nbsp;&nbsp;&nbsp;")
+		l = strings.ReplaceAll(l, "  ", "&nbsp;&nbsp;")
+		sb.WriteString(l)
+		sb.WriteString("</p>")
+	}
+
 	payload := map[string]any{
 		"body": map[string]any{
 			"contentType": "html",
-			"content":     "<pre>" + html.EscapeString(content) + "</pre>",
+			"content":     sb.String(),
 		},
 	}
 	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
@@ -470,6 +485,7 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 	var sb strings.Builder
 	var lastChar rune
 	var tagAddedNewline bool
+	var inPre bool
 
 	for {
 		tt := tokenizer.Next()
@@ -482,11 +498,14 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 		switch tt {
 		case html.StartTagToken, html.SelfClosingTagToken:
 			tag := token.Data
+			if tag == "pre" {
+				inPre = true
+			}
 			switch tag {
 			case "img":
 				orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("image")
 				sb.WriteString("🖼️  " + orangeText)
-				lastChar = 'e' // last char of "image" (approx)
+				lastChar = 'e'
 
 			case "attachment":
 				var attID string
@@ -496,14 +515,13 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 						break
 					}
 				}
-				// Skip messageReference attachments.
 				if att, ok := attByID[attID]; ok {
 					if att.ContentType != nil && *att.ContentType == "messageReference" {
 						continue
 					}
 					orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("Attachment")
 					sb.WriteString("📎 " + orangeText)
-					lastChar = 't' // last char of "Attachment"
+					lastChar = 't'
 				}
 
 			case "emoji":
@@ -534,6 +552,9 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 
 		case html.EndTagToken:
 			tag := token.Data
+			if tag == "pre" {
+				inPre = false
+			}
 			switch tag {
 			case "p", "div", "li", "pre":
 				if lastChar != '\n' && sb.Len() > 0 {
@@ -552,6 +573,7 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 		case html.TextToken:
 			text := html.UnescapeString(token.Data)
 			if tagAddedNewline {
+				// Consume exactly one leading newline if a tag just added one.
 				if strings.HasPrefix(text, "\n") {
 					text = text[1:]
 				} else if strings.HasPrefix(text, "\r\n") {
@@ -560,6 +582,12 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 				tagAddedNewline = false
 			}
 			if text != "" {
+				// Skip whitespace-only tokens if they follow a newline and we're not in pre.
+				// IMPORTANT: We do NOT skip non-breaking spaces (\u00A0) as they are used
+				// to represent intentional empty lines or indentation.
+				if !inPre && lastChar == '\n' && strings.TrimSpace(text) == "" && !strings.Contains(text, "\u00A0") {
+					continue
+				}
 				sb.WriteString(text)
 				r, _ := utf8.DecodeLastRuneInString(text)
 				lastChar = r
