@@ -52,6 +52,13 @@ type Message struct {
 	From            *MessageFrom        `json:"from,omitempty"`
 	Body            *MessageBody        `json:"body,omitempty"`
 	Attachments     []MessageAttachment `json:"attachments,omitempty"`
+	Reactions       []MessageReaction   `json:"reactions,omitempty"`
+}
+
+// MessageReaction represents a reaction to a message.
+type MessageReaction struct {
+	ReactionType string       `json:"reactionType"`
+	User         *MessageFrom `json:"user,omitempty"`
 }
 
 // MessageAttachment is a file or card attached to a message.

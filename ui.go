@@ -638,6 +638,16 @@ func (m Model) renderMessages(w, h int) string {
 			body = HTMLToText(*msg.Body.Content, msg.Attachments)
 		}
 
+		// Add reactions.
+		reactionsStr := renderReactions(msg.Reactions)
+		if reactionsStr != "" {
+			if body != "" {
+				body += "\n" + reactionsStr
+			} else {
+				body = reactionsStr
+			}
+		}
+
 		msgLines := wordWrap(body, maxW)
 		padding := 0
 		if m.isOwn(msg) {
@@ -805,10 +815,23 @@ func messagesEqual(a, b []Message) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	if len(a) == 0 {
-		return true
+	for i := range a {
+		if a[i].ID != b[i].ID {
+			return false
+		}
+		if len(a[i].Reactions) != len(b[i].Reactions) {
+			return false
+		}
+		// Deep compare reactions.
+		for j := range a[i].Reactions {
+			if a[i].Reactions[j].ReactionType != b[i].Reactions[j].ReactionType {
+				return false
+			}
+			// If we really want to be sure, we could compare user IDs,
+			// but type changes are the most common visible change.
+		}
 	}
-	return a[0].ID == b[0].ID
+	return true
 }
 
 func (m Model) markRead() Model {
@@ -877,6 +900,75 @@ func (m Model) isOwn(msg Message) bool {
 		return false
 	}
 	return *msg.From.User.DisplayName == *m.app.CurrentUserName
+}
+
+func renderReactions(reactions []MessageReaction) string {
+	if len(reactions) == 0 {
+		return ""
+	}
+
+	counts := make(map[string]int)
+	for _, r := range reactions {
+		counts[strings.ToLower(r.ReactionType)]++
+	}
+
+	var parts []string
+	// Known reaction types for stable ordering.
+	types := []string{"like", "heart", "laugh", "surprised", "sad", "angry"}
+	for _, t := range types {
+		if count, ok := counts[t]; ok {
+			emoji := reactionEmoji(t)
+			if count > 1 {
+				parts = append(parts, fmt.Sprintf("%s %d", emoji, count))
+			} else {
+				parts = append(parts, emoji)
+			}
+		}
+	}
+
+	// Any other types?
+	for t, count := range counts {
+		found := false
+		for _, known := range types {
+			if t == known {
+				found = true
+				break
+			}
+		}
+		if !found {
+			emoji := reactionEmoji(t)
+			if count > 1 {
+				parts = append(parts, fmt.Sprintf("%s %d", emoji, count))
+			} else {
+				parts = append(parts, emoji)
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return lipgloss.NewStyle().Foreground(colDimGray).Render(strings.Join(parts, "  "))
+}
+
+func reactionEmoji(t string) string {
+	switch strings.ToLower(t) {
+	case "like", "👍":
+		return "👍"
+	case "heart", "❤️":
+		return "❤️"
+	case "laugh", "😂":
+		return "😂"
+	case "surprised", "😮":
+		return "😮"
+	case "sad", "😢":
+		return "😢"
+	case "angry", "😡":
+		return "😡"
+	default:
+		return t
+	}
 }
 
 // ---------------------------------------------------------------------------
