@@ -95,6 +95,7 @@ type App struct {
 	UrlSelectionMode     bool
 	UrlSelectedIndex     int
 	UrlsInMessage        []string
+	MessageLineOffsets   []int
 }
 
 // NewApp creates an App with sensible initial defaults.

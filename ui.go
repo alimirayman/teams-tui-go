@@ -461,7 +461,18 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "m":
 		if len(m.app.Messages) > 0 {
 			m.app.MessageSelectionMode = true
-			m.app.MessageSelectedIndex = 0 // start at the newest message (at index 0 in the API list)
+			if m.app.SnapToBottom {
+				m.app.MessageSelectedIndex = 0
+			} else {
+				// Try to start selection at the message currently at the top of the viewport.
+				m.app.MessageSelectedIndex = 0
+				for i := 0; i < len(m.app.Messages); i++ {
+					if i < len(m.app.MessageLineOffsets) && m.app.MessageLineOffsets[i] <= m.app.ScrollOffset {
+						m.app.MessageSelectedIndex = i
+						break
+					}
+				}
+			}
 		}
 	}
 
@@ -944,9 +955,12 @@ func (m Model) renderMessages(w, h int) string {
 	var selectedStartLine, selectedEndLine int = -1, -1
 	var pendingScrollLine int = -1
 
+	m.app.MessageLineOffsets = make([]int, len(msgs))
+
 	// Iterate in reverse (slice is newest-first) → append → shows newest at bottom.
 	for i := len(msgs) - 1; i >= 0; i-- {
 		msg := msgs[i]
+		m.app.MessageLineOffsets[i] = len(lines)
 
 		if m.app.PendingScrollID != "" && msg.ID == m.app.PendingScrollID {
 			pendingScrollLine = len(lines)
