@@ -11,10 +11,11 @@ Authenticates via **OAuth2 Device Code Flow** (no browser redirect needed), fetc
 - 🔐 OAuth2 Device Code Flow — authenticate with your Microsoft account, no browser redirect required
 - 💬 List all your Teams chats (1:1, group, meetings) with computed display names
 - 📨 View messages in any chat with HTML-to-text rendering (images, attachments, emoji)
-- ✏️ Send messages, including multiline via Alt+Enter
+- ❤️ Message Interactions — view and add reactions (Heart, Like, Laugh, etc.) to any message
+- ✏️ Message Management — send, edit, and delete messages (includes multi-line support)
 - 🔔 Notification modes: None / Console (BEL + visual bell) / System (desktop) / Both
 - 🔄 Background polling — chats and messages refresh automatically every ~3 s
-- ❤️ Message Interactions — view and add reactions (Heart, Like, Laugh, etc.) to any message
+
 - 🔵 Unread Indicators — chats with new messages are marked with a dot (●) and bold text
 - ⬆️ New messages bubble chats to the top of the list
 - 📌 Stable chat ordering — order only changes when new messages arrive
@@ -133,6 +134,7 @@ On first run (or after token expiry) you will be prompted to visit a URL and ent
 | `r`          | React to selected message (in Message Mode)          |
 | `y`          | Copy (yank) message text (in Message Mode)           |
 | `d`          | Delete selected message (in Message Mode)            |
+| `e`          | Edit selected message (in Message Mode)              |
 | `1-6`        | Send reaction (in Reaction Mode)                     |
 | `q`          | Quit                                                 |
 

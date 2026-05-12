@@ -358,21 +358,16 @@ func GetMessagesFromLink(accessToken, nextLink string) ([]Message, string, error
 // SendMessage
 // ---------------------------------------------------------------------------
 
-// SendMessage posts a message to the given chat.
-func SendMessage(accessToken, chatID, content string) error {
+// formatMessageBody prepares the payload body for sending or updating a message.
+func formatMessageBody(content string) map[string]any {
 	// If it's a single line with no indentation, plain text is fine.
 	if !strings.Contains(content, "\n") && !strings.HasPrefix(content, " ") && !strings.HasPrefix(content, "\t") {
-		payload := map[string]any{
-			"body": map[string]any{
-				"content": content,
-			},
+		return map[string]any{
+			"content": content,
 		}
-		return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
 	}
 
 	// For multi-line or indented content, use HTML with <p> tags per line.
-	// This is the most reliable way to force Teams Web and Desktop to preserve
-	// formatting without the side-effects of <pre> (like monospace font or stripping).
 	lines := strings.Split(content, "\n")
 	var sb strings.Builder
 	for _, l := range lines {
@@ -389,14 +384,28 @@ func SendMessage(accessToken, chatID, content string) error {
 		sb.WriteString("</p>")
 	}
 
+	return map[string]any{
+		"contentType": "html",
+		"content":     sb.String(),
+	}
+}
+
+// SendMessage posts a message to the given chat.
+func SendMessage(accessToken, chatID, content string) error {
 	payload := map[string]any{
-		"body": map[string]any{
-			"contentType": "html",
-			"content":     sb.String(),
-		},
+		"body": formatMessageBody(content),
 	}
 	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
 }
+
+// UpdateMessage modifies an existing message in a chat.
+func UpdateMessage(accessToken, chatID, messageID, content string) error {
+	payload := map[string]any{
+		"body": formatMessageBody(content),
+	}
+	return graphPatch(accessToken, "/chats/"+chatID+"/messages/"+messageID, payload)
+}
+
 
 // ---------------------------------------------------------------------------
 // SetReaction

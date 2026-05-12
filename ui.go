@@ -461,6 +461,7 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "esc":
 		m.app.InputMode = false
 		m.app.InputBuffer = ""
+		m.app.EditingMessageID = nil
 		m.textarea.Reset()
 		return m, nil
 
@@ -475,6 +476,11 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		chat := m.app.GetSelectedChat()
 		if chat == nil {
 			return m, nil
+		}
+		if m.app.EditingMessageID != nil {
+			msgID := *m.app.EditingMessageID
+			m.app.EditingMessageID = nil
+			return m, updateMessageCmd(m.clientID, chat.ID, msgID, content)
 		}
 		return m, sendMessageCmd(m.clientID, chat.ID, content)
 
@@ -528,11 +534,31 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			if m.isOwn(msgObj) {
 				m.app.DeleteConfirmMode = true
 			} else {
-				m.app.Status = "Cannot delete messages from others"
+				m.app.SetStatus("Cannot delete messages from others", 3*time.Second)
+			}
+		}
+		return m, nil
+
+	case "e":
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			if m.isOwn(msgObj) {
+				m.app.MessageSelectionMode = false
+				m.app.EditingMessageID = &msgObj.ID
+				m.app.InputMode = true
+				content := ""
+				if msgObj.Body != nil && msgObj.Body.Content != nil {
+					content = HTMLToText(*msgObj.Body.Content, msgObj.Attachments)
+				}
+				m.textarea.SetValue(content)
+				return m, m.textarea.Focus()
+			} else {
+				m.app.SetStatus("Cannot edit messages from others", 3*time.Second)
 			}
 		}
 		return m, nil
 	}
+
 	return m, nil
 }
 
@@ -636,7 +662,7 @@ func (m Model) renderRightPanel(w, h int) string {
 	if !m.app.InputMode {
 		title := "Messages (i:compose, m:select, K/J:scroll)"
 		if m.app.MessageSelectionMode {
-			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, d:delete, ESC/m:exit)"
+			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, d:delete, e:edit, ESC/m:exit)"
 		}
 		msgContent := m.renderMessages(w, h-1)
 		return normalBorder.Width(w).Height(h).
@@ -656,9 +682,13 @@ func (m Model) renderRightPanel(w, h int) string {
 	}
 
 	msgContent := m.renderMessages(w, msgH-1)
+	title := "Messages (ESC to cancel)"
+	if m.app.EditingMessageID != nil {
+		title = "EDITING MESSAGE (ESC to cancel)"
+	}
 	msgBox := normalBorder.Width(w).Height(msgH).
 		Render(lipgloss.JoinVertical(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(colDimGray).Render("Messages (ESC to cancel)"),
+			lipgloss.NewStyle().Foreground(colDimGray).Render(title),
 			msgContent,
 		))
 

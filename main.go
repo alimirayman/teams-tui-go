@@ -130,6 +130,18 @@ func deleteMessageCmd(clientID, chatID, messageID string) tea.Cmd {
 	}
 }
 
+// updateMessageCmd modifies a message in the background.
+func updateMessageCmd(clientID, chatID, messageID, content string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgSendDone{Err: err}
+		}
+		err = UpdateMessage(token, chatID, messageID, content)
+		return MsgSendDone{Err: err}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Desktop notification
 // ---------------------------------------------------------------------------

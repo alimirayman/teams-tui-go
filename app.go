@@ -91,6 +91,7 @@ type App struct {
 	StatusUntil     *time.Time
 	NextLink        string
 	PendingScrollID string
+	EditingMessageID *string
 }
 
 // NewApp creates an App with sensible initial defaults.
