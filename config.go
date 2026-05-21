@@ -68,6 +68,64 @@ func LoadConfig() *Config {
 	return &cfg
 }
 
+// InitConfig loads the configuration, populates any missing options with their
+// default values, and saves the updated configuration back to config.json.
+func InitConfig() {
+	dir, err := GetAppDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(dir, "config.json")
+
+	var cfg Config
+	exists := true
+	data, err := os.ReadFile(path)
+	if err != nil {
+		exists = false
+	} else {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			exists = false
+		}
+	}
+
+	modified := false
+
+	if cfg.ClientID == nil {
+		id := defaultClientID
+		cfg.ClientID = &id
+		modified = true
+	}
+	if cfg.NotificationMode == nil {
+		mode := NotificationNone
+		cfg.NotificationMode = &mode
+		modified = true
+	}
+	if cfg.NotificationShowPreview == nil {
+		show := false
+		cfg.NotificationShowPreview = &show
+		modified = true
+	}
+	if cfg.NotificationPreviewLen == nil {
+		length := 50
+		cfg.NotificationPreviewLen = &length
+		modified = true
+	}
+	if cfg.MessageLimit == nil {
+		limit := 50
+		cfg.MessageLimit = &limit
+		modified = true
+	}
+	if cfg.SearchContextLimit == nil {
+		limit := 3
+		cfg.SearchContextLimit = &limit
+		modified = true
+	}
+
+	if !exists || modified {
+		_ = SaveConfig(&cfg)
+	}
+}
+
 // SaveConfig writes config.json (pretty-printed) to the app dir.
 func SaveConfig(cfg *Config) error {
 	dir, err := GetAppDir()
@@ -102,10 +160,15 @@ func ResolveClientID() string {
 // ResolveMessageLimit returns the number of messages to fetch, using precedence:
 //  1. config.json -> message_limit
 //  2. Default (50)
+//  Note: The Microsoft Graph API limits the $top parameter to a maximum of 50.
 func ResolveMessageLimit() int {
 	cfg := LoadConfig()
 	if cfg != nil && cfg.MessageLimit != nil && *cfg.MessageLimit > 0 {
-		return *cfg.MessageLimit
+		limit := *cfg.MessageLimit
+		if limit > 50 {
+			return 50
+		}
+		return limit
 	}
 	return 50
 }

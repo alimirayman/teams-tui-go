@@ -18,8 +18,9 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 ### Configuration (`config.go`)
 - App data: `~/.config/teams-tui-go/` (via `GetAppDir()`)
 - Cache: `~/.cache/teams-tui-go/` (via `GetCacheDir()`)
-- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`, `NotificationShowPreview *bool`, `NotificationPreviewLen *int`, `MessageLimit *int`
-- `ResolveClientID()` and `ResolveMessageLimit()` implement the full precedence chain
+- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`, `NotificationShowPreview *bool`, `NotificationPreviewLen *int`, `MessageLimit *int`, `SearchContextLimit *int`
+- `ResolveClientID()`, `ResolveMessageLimit()`, and `ResolveSearchContextLimit()` implement the full precedence chain
+- `InitConfig()` is run at application startup to populate any missing configuration keys in `config.json` with their default values and persist them to disk
 
 ### API Layer (`api.go`)
 - **User Detection**: Identifies the current user by counting name frequency across `oneOnOne` chats

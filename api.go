@@ -322,6 +322,9 @@ func GetChatMembers(accessToken, chatID string) []ChatMember {
 func GetMessages(accessToken, chatID string, top int) ([]Message, string, error) {
 	url := "/chats/" + chatID + "/messages?$orderby=createdDateTime%20desc"
 	if top > 0 {
+		if top > 50 {
+			top = 50
+		}
 		url += fmt.Sprintf("&$top=%d", top)
 	}
 	body, err := graphGet(accessToken, url)

@@ -295,6 +295,9 @@ func main() {
 	fmt.Println("TeamsTUI")
 	fmt.Println("================================")
 
+	// Initialize configuration and write defaults for any missing keys.
+	InitConfig()
+
 	// 2. Resolve client ID and authenticate.
 	clientID := ResolveClientID()
 	accessToken, err := GetAccessToken(clientID)
