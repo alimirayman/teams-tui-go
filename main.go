@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 
@@ -27,11 +28,11 @@ func loadChatsCmd(clientID string, existingChats []Chat, currentUserName *string
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
-			return nil // silently ignore background refresh errors
+			return MsgChatsLoaded{Chats: existingChats, CurrentUserName: currentUserName}
 		}
 		chats, currentUser, err := GetChats(token, existingChats, currentUserName)
 		if err != nil {
-			return nil
+			return MsgChatsLoaded{Chats: existingChats, CurrentUserName: currentUserName}
 		}
 		return MsgChatsLoaded{Chats: chats, CurrentUserName: currentUser}
 	}
@@ -257,6 +258,7 @@ func loadInitialChatOrder(chats []Chat) ([]Chat, map[string]string, map[string]t
 			lut, _ := time.Parse(time.RFC3339Nano, *c.LastUpdated)
 			if lut.After(t) {
 				t = lut
+				lastMsgTimes[c.ID] = t
 			}
 		}
 		combined[i] = chatWithTime{c, t}
@@ -291,6 +293,9 @@ func loadInitialChatOrder(chats []Chat) ([]Chat, map[string]string, map[string]t
 // ---------------------------------------------------------------------------
 
 func main() {
+	// Set default HTTP client timeout to prevent background refreshes from hanging indefinitely.
+	http.DefaultClient.Timeout = 15 * time.Second
+
 	// 1. Banner.
 	fmt.Println("TeamsTUI")
 	fmt.Println("================================")

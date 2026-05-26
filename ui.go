@@ -312,8 +312,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newID := c.LastMessagePreview.ID
 
 			newTime, _ := time.Parse(time.RFC3339Nano, c.LastMessagePreview.CreatedDateTime)
+			if c.LastUpdated != nil {
+				lut, _ := time.Parse(time.RFC3339Nano, *c.LastUpdated)
+				if lut.After(newTime) {
+					newTime = lut
+				}
+			}
 
-			if ok && prevID != newID {
+			if ok && prevID != newID && !m.lastMsgTime[c.ID].IsZero() && newTime.After(m.lastMsgTime[c.ID].Add(time.Second)) {
 				m.lastMsgID[c.ID] = newID
 				m.lastMsgTime[c.ID] = newTime
 
@@ -324,10 +330,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					isOwnMsg = *c.LastMessagePreview.From.User.DisplayName == *m.app.CurrentUserName
 				}
 
-				if isOwnMsg {
+				isActiveChat := false
+				if selChat := m.app.GetSelectedChat(); selChat != nil && selChat.ID == c.ID && m.focused {
+					isActiveChat = true
+				}
+
+				if isOwnMsg || isActiveChat {
 					m.lastReadMsgID[c.ID] = newID
 					m.promoteChat(c.ID)
+					if isActiveChat {
+						go MarkChatAsRead(func() string {
+							t, _ := GetValidTokenSilent(m.clientID)
+							return t
+						}(), c.ID, m.userID)
+					}
 				} else {
+					// Track the unread message ID locally to ensure isUnread returns true
+					m.lastReadMsgID[c.ID] = prevID
+
 					// Trigger notification.
 					senderName := ""
 					if c.LastMessagePreview.From != nil && c.LastMessagePreview.From.User != nil && c.LastMessagePreview.From.User.DisplayName != nil {
@@ -344,8 +364,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notify(senderName, tempMsg)
 					m.promoteChat(c.ID)
 				}
-			} else if !ok {
-				// Initialize cache for newly seen chat.
+			} else if !ok || (ok && m.lastMsgTime[c.ID].IsZero()) {
+				// Initialize cache for newly seen or uninitialized chat.
 				m.lastMsgID[c.ID] = newID
 				m.lastMsgTime[c.ID] = newTime
 			}
@@ -595,52 +615,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if chat != nil {
 					newLastID := ""
 					var newTime time.Time
-
-					if chat.LastMessagePreview != nil {
-						newLastID = chat.LastMessagePreview.ID
-						newTime, _ = time.Parse(time.RFC3339Nano, chat.LastMessagePreview.CreatedDateTime)
-					} else {
-						// Fallback if preview is nil (e.g. very old/inactive chats)
-						latestMsg := msg.Messages[0]
-						for _, msgObj := range msg.Messages {
-							if msgObj.MessageType == "" || msgObj.MessageType == "message" {
-								latestMsg = msgObj
-								break
-							}
-						}
+					var latestMsg Message
+					if len(msg.Messages) > 0 {
+						latestMsg = msg.Messages[0]
 						newLastID = latestMsg.ID
 						newTime, _ = time.Parse(time.RFC3339Nano, latestMsg.CreatedDateTime)
 					}
 
-					old, ok := m.lastMsgID[chat.ID]
-					if !ok {
-						m.lastMsgID[chat.ID] = newLastID
-						m.lastMsgTime[chat.ID] = newTime
-					} else if old != newLastID {
-						m.lastMsgID[chat.ID] = newLastID
-						m.lastMsgTime[chat.ID] = newTime
-						m.promoteChat(chat.ID)
+					if newLastID != "" {
+						old, ok := m.lastMsgID[chat.ID]
+						if !ok || m.lastMsgTime[chat.ID].IsZero() {
+							m.lastMsgID[chat.ID] = newLastID
+							m.lastMsgTime[chat.ID] = newTime
+						} else if old != newLastID && newTime.After(m.lastMsgTime[chat.ID].Add(time.Second)) {
+							m.lastMsgID[chat.ID] = newLastID
+							m.lastMsgTime[chat.ID] = newTime
+							m.promoteChat(chat.ID)
 
-						// If we sent the message, mark it as read immediately.
-						isOwnMsg := false
-						if chat.LastMessagePreview != nil {
-							if m.app.CurrentUserName != nil && chat.LastMessagePreview.From != nil &&
-								chat.LastMessagePreview.From.User != nil && chat.LastMessagePreview.From.User.DisplayName != nil {
-								isOwnMsg = *chat.LastMessagePreview.From.User.DisplayName == *m.app.CurrentUserName
-							}
-						} else {
-							latestMsg := msg.Messages[0]
-							for _, msgObj := range msg.Messages {
-								if msgObj.MessageType == "" || msgObj.MessageType == "message" {
-									latestMsg = msgObj
-									break
+							isOwnMsg := m.isOwn(latestMsg)
+							if isOwnMsg || m.focused {
+								m.lastReadMsgID[chat.ID] = newLastID
+								if m.focused {
+									go MarkChatAsRead(func() string {
+										t, _ := GetValidTokenSilent(m.clientID)
+										return t
+									}(), chat.ID, m.userID)
 								}
+							} else {
+								// Trigger notification if blurred, and mark as unread locally
+								m.lastReadMsgID[chat.ID] = old
+								senderName := ""
+								if latestMsg.From != nil && latestMsg.From.User != nil && latestMsg.From.User.DisplayName != nil {
+									senderName = *latestMsg.From.User.DisplayName
+								}
+								m.notify(senderName, latestMsg)
 							}
-							isOwnMsg = m.isOwn(latestMsg)
-						}
-
-						if isOwnMsg {
-							m.lastReadMsgID[chat.ID] = newLastID
 						}
 					}
 				}
@@ -1867,14 +1876,7 @@ func (m Model) markRead() Model {
 
 	lastID := m.lastMsgID[chat.ID]
 	if lastID == "" && len(m.app.Messages) > 0 {
-		latestMsg := m.app.Messages[0]
-		for _, msgObj := range m.app.Messages {
-			if msgObj.MessageType == "" || msgObj.MessageType == "message" {
-				latestMsg = msgObj
-				break
-			}
-		}
-		lastID = latestMsg.ID
+		lastID = m.app.Messages[0].ID
 	}
 
 	if lastID != "" && m.lastReadMsgID[chat.ID] != lastID {
