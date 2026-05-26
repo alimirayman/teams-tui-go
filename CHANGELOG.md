@@ -1,7 +1,5 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
 ## [0.9.0] - 2026-05-26
 
 ### Features
@@ -41,6 +39,12 @@ ordering.
 
 
 ### Miscellaneous Tasks
+
+- **Remove boilerplate sentence from changelog header** - ([8230583](8230583445d816fa6bec275daffcdb94ea3d7635))
+
+
+- **Update CHANGELOG.md for v0.9.0 [skip ci]** - ([579cdaa](579cdaa319f4f8337dc777b0c219691bc2259d14))
+
 
 - **Suppress Node 20 deprecation warnings and commit CHANGELOG.md to repo** - ([42725c4](42725c4b9c59a3981bfdeaaf7cef16f57fe38259))
 
