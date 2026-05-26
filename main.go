@@ -292,12 +292,14 @@ func loadInitialChatOrder(chats []Chat) ([]Chat, map[string]string, map[string]t
 // main
 // ---------------------------------------------------------------------------
 
+var version = "dev"
+
 func main() {
 	// Set default HTTP client timeout to prevent background refreshes from hanging indefinitely.
 	http.DefaultClient.Timeout = 15 * time.Second
 
 	// 1. Banner.
-	fmt.Println("TeamsTUI")
+	fmt.Printf("TeamsTUI %s\n", version)
 	fmt.Println("================================")
 
 	// Initialize configuration and write defaults for any missing keys.

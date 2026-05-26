@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    name: Generate changelog
+    runs-on: ubuntu-latest
+    outputs:
+      release_body: ${{ steps.git-cliff.outputs.content }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate a changelog
+        uses: orhun/git-cliff-action@v3
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: -vv --latest --strip header
+        env:
+          OUTPUT: CHANGES.md
+
+  build-and-release:
+    name: Build and Release
+    needs: changelog
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p release-builds
+          BINARY_NAME=teams-tui-go
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME=teams-tui-go.exe
+          fi
+          
+          echo "Building for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o release-builds/${BINARY_NAME} .
+          
+          cd release-builds
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip -r ../teams-tui-go-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip ${BINARY_NAME}
+          else
+            tar -czvf ../teams-tui-go-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ${BINARY_NAME}
+          fi
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ needs.changelog.outputs.release_body }}
+          files: |
+            teams-tui-go-*.tar.gz
+            teams-tui-go-*.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
