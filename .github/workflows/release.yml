@@ -24,18 +24,23 @@ jobs:
           fetch-depth: 0
 
       - name: Generate a changelog
-        uses: orhun/git-cliff-action@v4
         id: git-cliff
-        with:
-          config: cliff.toml
-          args: -vv --latest --strip header
-        env:
-          OUTPUT: CHANGES.md
+        run: |
+          wget https://github.com/orhun/git-cliff/releases/download/v2.2.1/git-cliff-2.2.1-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf git-cliff-2.2.1-x86_64-unknown-linux-gnu.tar.gz
+          ./git-cliff-2.2.1/git-cliff --config cliff.toml -vv --latest --strip header > CHANGES.md
+          
+          # Read the file and set it as a multi-line output variable for the next job
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "content<<$EOF" >> $GITHUB_OUTPUT
+          cat CHANGES.md >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
 
   build-and-release:
     name: Build and Release
     needs: changelog
     runs-on: ubuntu-latest
+    container: golang:1.25.0
     strategy:
       matrix:
         goos: [linux, windows, darwin]
@@ -46,10 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: 'go.mod'
+      - name: Install dependencies
+        run: apt-get update && apt-get install -y zip tar
 
       - name: Build
         env:
