@@ -95,6 +95,7 @@ type App struct {
 	NextLink        string
 	PendingScrollID string
 	EditingMessageID *string
+	ReplyToMessage   *Message // set when user presses 'a' to reply-quote a message
 	UrlSelectionMode     bool
 	UrlSelectedIndex     int
 	UrlsInMessage        []string

@@ -1066,6 +1066,7 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.app.InputMode = false
 		m.app.InputBuffer = ""
 		m.app.EditingMessageID = nil
+		m.app.ReplyToMessage = nil
 		m.textarea.Reset()
 		return m, nil
 
@@ -1085,6 +1086,11 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			msgID := *m.app.EditingMessageID
 			m.app.EditingMessageID = nil
 			return m, updateMessageCmd(m.clientID, chat.ID, msgID, content)
+		}
+		if m.app.ReplyToMessage != nil {
+			ref := m.app.ReplyToMessage
+			m.app.ReplyToMessage = nil
+			return m, sendMessageWithRefCmd(m.clientID, chat.ID, content, ref)
 		}
 		return m, sendMessageCmd(m.clientID, chat.ID, content)
 
@@ -1208,37 +1214,12 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "a":
 		if m.app.MessageSelectedIndex < len(m.app.Messages) {
 			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			// Store the referenced message — the actual Teams attachment is built on send.
+			ref := msgObj
+			m.app.ReplyToMessage = &ref
 			m.app.MessageSelectionMode = false
 			m.app.InputMode = true
-			
-			sender := "Unknown"
-			if msgObj.From != nil && msgObj.From.User != nil && msgObj.From.User.DisplayName != nil {
-				sender = *msgObj.From.User.DisplayName
-			}
-			if m.isOwn(msgObj) {
-				sender = "Me"
-			}
-			
-			content := ""
-			if msgObj.Body != nil && msgObj.Body.Content != nil {
-				content = stripANSI(HTMLToText(*msgObj.Body.Content, msgObj.Attachments))
-			}
-			
-			var quoted strings.Builder
-			lines := strings.Split(content, "\n")
-			quoted.WriteString("> " + sender + ": ")
-			if len(lines) > 0 {
-				quoted.WriteString(lines[0] + "\n")
-				for _, l := range lines[1:] {
-					quoted.WriteString("> " + l + "\n")
-				}
-			} else {
-				quoted.WriteString("\n")
-			}
-			quoted.WriteString("\n")
-			
-			m.textarea.SetValue(quoted.String())
-			m.textarea.CursorEnd()
+			m.textarea.Reset()
 			return m, m.textarea.Focus()
 		}
 		return m, nil
@@ -1467,7 +1448,11 @@ func (m Model) renderRightPanel(w, h int) string {
 	}
 
 	// Input mode: split height between messages and textarea.
+	// When replying, add 2 extra lines for the quote preview.
 	inputH := 5
+	if m.app.ReplyToMessage != nil {
+		inputH = 7
+	}
 	msgH := h - inputH - 1
 	if msgH < 1 {
 		msgH = 1
@@ -1477,6 +1462,16 @@ func (m Model) renderRightPanel(w, h int) string {
 	title := "Messages (ESC to cancel)"
 	if m.app.EditingMessageID != nil {
 		title = "EDITING MESSAGE (ESC to cancel)"
+	} else if m.app.ReplyToMessage != nil {
+		ref := m.app.ReplyToMessage
+		sender := "someone"
+		if ref.From != nil && ref.From.User != nil && ref.From.User.DisplayName != nil {
+			sender = *ref.From.User.DisplayName
+			if m.isOwn(*ref) {
+				sender = "yourself"
+			}
+		}
+		title = "REPLYING TO " + sender + " (ESC to cancel)"
 	}
 	msgBox := normalBorder.Width(w).Height(msgH).
 		Render(lipgloss.JoinVertical(lipgloss.Left,
@@ -1486,15 +1481,48 @@ func (m Model) renderRightPanel(w, h int) string {
 
 	m.textarea.SetWidth(w)
 	m.textarea.SetHeight(inputH - 2)
+
+	// Build input box contents — add quote preview when replying.
+	hintLine := lipgloss.NewStyle().Foreground(colDimGray).
+		Render("Type your message (Enter to send, Alt+Enter for new line, ESC to cancel)")
+	inputParts := []string{hintLine}
+
+	if m.app.ReplyToMessage != nil {
+		ref := m.app.ReplyToMessage
+		// Build a one-line preview using the same style as renderMessageReference.
+		preview := ""
+		if ref.Body != nil && ref.Body.Content != nil {
+			preview = stripANSI(HTMLToText(*ref.Body.Content, ref.Attachments))
+		}
+		preview = strings.ReplaceAll(preview, "\n", " ")
+		const maxPrev = 80
+		if len([]rune(preview)) > maxPrev {
+			preview = string([]rune(preview)[:maxPrev]) + "…"
+		}
+		sender := ""
+		if ref.From != nil && ref.From.User != nil && ref.From.User.DisplayName != nil {
+			sender = *ref.From.User.DisplayName
+			if m.isOwn(*ref) {
+				sender = "Me"
+			}
+		}
+		bar     := lipgloss.NewStyle().Foreground(lipgloss.Color("#4A90D9")).Bold(true).Render("▎")
+		name    := lipgloss.NewStyle().Foreground(lipgloss.Color("#7EC8E3")).Bold(true).Render(sender)
+		text    := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C7A89")).Render(": " + preview)
+		quoteLine := bar + " " + name + text
+		inputParts = append(inputParts, quoteLine)
+		// Separator between quote and textarea.
+		inputParts = append(inputParts, lipgloss.NewStyle().Foreground(colDimGray).Render(strings.Repeat("─", w)))
+		m.textarea.SetHeight(inputH - 4) // hint + quote + separator lines
+	}
+
+	inputParts = append(inputParts, m.textarea.View())
+
 	inputBox := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(colGreen).
 		Width(w).Height(inputH - 1).
-		Render(lipgloss.JoinVertical(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(colDimGray).
-				Render("Type your message (Enter to send, Alt+Enter for new line, ESC to cancel)"),
-			m.textarea.View(),
-		))
+		Render(lipgloss.JoinVertical(lipgloss.Left, inputParts...))
 
 	return lipgloss.JoinVertical(lipgloss.Left, msgBox, inputBox)
 }

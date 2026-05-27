@@ -155,6 +155,18 @@ func sendMessageCmd(clientID, chatID, content string) tea.Cmd {
 	}
 }
 
+// sendMessageWithRefCmd sends a reply message with a Teams messageReference attachment.
+func sendMessageWithRefCmd(clientID, chatID, content string, ref *Message) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgSendDone{Err: err}
+		}
+		err = SendMessageWithReference(token, chatID, ref, content)
+		return MsgSendDone{Err: err}
+	}
+}
+
 // setReactionCmd adds a reaction to a message in the background.
 func setReactionCmd(clientID, chatID, messageID, reactionType string) tea.Cmd {
 	return func() tea.Msg {

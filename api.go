@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -93,6 +94,7 @@ type MessageAttachment struct {
 	ID          string  `json:"id"`
 	Name        *string `json:"name,omitempty"`
 	ContentType *string `json:"contentType,omitempty"`
+	Content     *string `json:"content,omitempty"`
 }
 
 // MessageFrom holds the sender information.
@@ -452,6 +454,93 @@ func SendMessage(accessToken, chatID, content string) error {
 		"body": formatMessageBody(content),
 	}
 	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
+}
+
+// SendMessageWithReference posts a reply-to-message using a Teams messageReference
+// attachment, making it appear as a proper quoted reply in the Teams client.
+func SendMessageWithReference(accessToken, chatID string, ref *Message, content string) error {
+	if ref == nil {
+		return SendMessage(accessToken, chatID, content)
+	}
+
+	// Build the sender JSON for the attachment content field.
+	senderName := ""
+	senderID := ""
+	if ref.From != nil && ref.From.User != nil {
+		if ref.From.User.DisplayName != nil {
+			senderName = *ref.From.User.DisplayName
+		}
+		if ref.From.User.ID != nil {
+			senderID = *ref.From.User.ID
+		}
+	}
+
+	// messagePreview is the plain-text snippet of the quoted message.
+	preview := ""
+	if ref.Body != nil && ref.Body.Content != nil {
+		preview = stripBasicHTML(*ref.Body.Content)
+	}
+	const maxPreview = 200
+	if len([]rune(preview)) > maxPreview {
+		preview = string([]rune(preview)[:maxPreview]) + "…"
+	}
+
+	attContent := map[string]any{
+		"messageId":      ref.ID,
+		"messagePreview": preview,
+		"messageSender": map[string]any{
+			"application": nil,
+			"device":      nil,
+			"user": map[string]any{
+				"userIdentityType": "aadUser",
+				"id":               senderID,
+				"displayName":      senderName,
+			},
+		},
+	}
+	attContentJSON, _ := json.Marshal(attContent)
+
+	// The body MUST be HTML and MUST contain <attachment id="..."></attachment> as a
+	// placeholder so Teams knows where to render the quote bubble.
+	marker := fmt.Sprintf(`<attachment id="%s"></attachment>`, ref.ID)
+	var bodyHTML string
+	if containsMarkdown(content) || strings.Contains(content, "\n") {
+		bodyHTML = marker + "\n" + markdownToHTML(content)
+	} else {
+		bodyHTML = marker + "\n<p>" + content + "</p>"
+	}
+
+	payload := map[string]any{
+		"body": map[string]any{
+			"contentType": "html",
+			"content":     bodyHTML,
+		},
+		"attachments": []map[string]any{
+			{
+				"id":          ref.ID,
+				"contentType": "messageReference",
+				"content":     string(attContentJSON),
+			},
+		},
+	}
+	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
+}
+
+// stripBasicHTML removes HTML tags to produce a plain-text preview.
+// It is a lightweight alternative to HTMLToText for building attachment content fields.
+func stripBasicHTML(s string) string {
+	tokenizer := html.NewTokenizer(strings.NewReader(s))
+	var sb strings.Builder
+	for {
+		tt := tokenizer.Next()
+		if tt == html.ErrorToken {
+			break
+		}
+		if tt == html.TextToken {
+			sb.WriteString(html.UnescapeString(tokenizer.Token().Data))
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // UpdateMessage modifies an existing message in a chat.
@@ -1005,6 +1094,18 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 				}
 				if att, ok := attByID[attID]; ok {
 					if att.ContentType != nil && *att.ContentType == "messageReference" {
+						// Render a quoted-message block: ▎ Sender: preview text
+						if att.Content != nil {
+							quote := renderMessageReference(*att.Content)
+							if quote != "" {
+								if sb.Len() > 0 && lastChar != '\n' {
+									sb.WriteRune('\n')
+								}
+								sb.WriteString(quote)
+								sb.WriteRune('\n')
+								lastChar = '\n'
+							}
+						}
 						continue
 					}
 					orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("Attachment")
@@ -1278,6 +1379,68 @@ func SearchUsers(accessToken, query string) ([]User, error) {
 		return nil, fmt.Errorf("SearchUsers parse: %w", err)
 	}
 	return r.Value, nil
+}
+
+// renderMessageReference parses a messageReference attachment content JSON and
+// returns a styled terminal quote block: "▎ SenderName [2 Jan 15:04]: message preview".
+// Returns an empty string if the content cannot be parsed.
+func renderMessageReference(content string) string {
+	var ref struct {
+		MessageID      string `json:"messageId"`
+		MessagePreview string `json:"messagePreview"`
+		MessageSender  struct {
+			User *struct {
+				DisplayName string `json:"displayName"`
+			} `json:"user"`
+		} `json:"messageSender"`
+	}
+	if err := json.Unmarshal([]byte(content), &ref); err != nil {
+		return ""
+	}
+
+	preview := strings.TrimSpace(ref.MessagePreview)
+	if preview == "" {
+		return ""
+	}
+
+	// Truncate very long previews.
+	const maxPreview = 120
+	if len([]rune(preview)) > maxPreview {
+		runes := []rune(preview)
+		preview = string(runes[:maxPreview]) + "…"
+	}
+
+	// Teams message IDs are Unix timestamps in milliseconds.
+	var timeStr string
+	if ms, err := strconv.ParseInt(ref.MessageID, 10, 64); err == nil && ms > 0 {
+		t := time.UnixMilli(ms).Local()
+		now := time.Now()
+		if t.Year() == now.Year() {
+			timeStr = t.Format("2 Jan 15:04")
+		} else {
+			timeStr = t.Format("2 Jan 2006 15:04")
+		}
+	}
+
+	quoteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C7A89"))
+	barStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#4A90D9")).Bold(true)
+	nameStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#7EC8E3")).Bold(true)
+	timeStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#4A5568"))
+
+	bar := barStyle.Render("▎")
+
+	var meta string
+	if ref.MessageSender.User != nil && ref.MessageSender.User.DisplayName != "" {
+		meta = nameStyle.Render(ref.MessageSender.User.DisplayName)
+	}
+	if timeStr != "" {
+		meta += timeStyle.Render(" [" + timeStr + "]")
+	}
+
+	if meta != "" {
+		return bar + " " + meta + quoteStyle.Render(": "+preview)
+	}
+	return bar + " " + quoteStyle.Render(preview)
 }
 
 // GetOrCreateOneOnOneChat creates a new 1-on-1 chat with the user specified by their UPN (email).
