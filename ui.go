@@ -1753,11 +1753,20 @@ func (m Model) renderMessages(w, h int) string {
 
 	// Auto-scroll to keep selection visible.
 	if m.app.MessageSelectionMode && selectedStartLine != -1 {
+		msgHeight := selectedEndLine - selectedStartLine
 		if selectedStartLine < m.app.ScrollOffset {
+			// Selection scrolled above the top — bring it back into view.
 			m.app.ScrollOffset = selectedStartLine
 			m.app.SnapToBottom = false
 		} else if selectedEndLine > m.app.ScrollOffset+h {
-			m.app.ScrollOffset = selectedEndLine - h
+			if msgHeight >= h {
+				// Message is taller than the viewport — anchor to its top so
+				// the user sees the beginning rather than jumping to the end.
+				m.app.ScrollOffset = selectedStartLine
+			} else {
+				// Message fits — scroll just enough to expose its bottom.
+				m.app.ScrollOffset = selectedEndLine - h
+			}
 			m.app.SnapToBottom = false
 		}
 	}
