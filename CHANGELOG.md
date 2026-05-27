@@ -1,5 +1,78 @@
 # Changelog
 
+## [0.9.2] - 2026-05-27
+
+### Bug Fixes
+
+- **Proper changelog generation** - ([ee09472](ee094724eb5a62ad99de9685d47983c7b4de3ec4))
+
+
+
+### Other
+
+- **Merge branch 'main' of github.com:nospor/teams-tui-go** - ([4876936](4876936a9d6c49c21e3efb44feb9f836b53bebc5))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v0.9.0 [skip ci]** - ([da31b06](da31b06a31d99788023d55400276494a75e839a5))
+
+
+
+## [0.9.1] - 2026-05-27
+
+### Features
+
+- **Add native Teams quoted message support (receive & send)** - ([63a3085](63a3085ebebe0bc155088c3b1c02f153433c81e7))
+
+
+- **Markdown formatting for send/receive and edit round-trip** - ([b97d410](b97d4100bef463233205a3124dd8bea6204b7ebb))
+
+
+Add markdown-to-HTML conversion on send and HTML-to-styled-terminal
+rendering on receive. Also preserve markdown syntax when editing
+existing messages.
+Send side (markdown.go):
+- New markdownToHTML() converts **bold**, *italic*, ~~strike~~,
+  `inline code`, fenced code blocks, and bullet/ordered lists to
+  Teams-compatible HTML before posting via the Graph API
+- Single-line plain-text messages bypass conversion entirely
+- formatMessageBody() in api.go updated to use markdownToHTML()
+Receive side (api.go - HTMLToText):
+- Track <b>/<strong>, <em>/<i>, <s>/<strike>/<del>, <code> state
+  and apply lipgloss ANSI styles (bold, italic, strikethrough, amber)
+- <pre><code> blocks rendered in green
+- <ul>/<ol>/<li> rendered with • / 1. prefixes (dimmed, indented)
+- Inline styles compose correctly with existing link/URL rendering
+Edit round-trip (markdown.go - HTMLToMarkdown):
+- New HTMLToMarkdown() converts stored HTML back to markdown syntax
+  when 'e' is pressed, so bold/italic/code/lists are preserved in
+  the edit textarea rather than being stripped to plain text
+- <code> content is buffered and emitted as a fenced block if
+  multi-line, inline backtick if single-line (handles Teams stripping
+  <pre> wrappers from the stored HTML)
+- Whitespace-only paragraphs (both &nbsp; and plain space variants)
+  are treated as blank-line placeholders with correct blank-line
+  preservation around code blocks
+
+
+- **Cache messages per chat to eliminate reload flash on revisit** - ([6f756a0](6f756a05ea1262c64ea078de28f4874d23b71ed2))
+
+
+
+### Bug Fixes
+
+- **When in "select" mode, it now loads history messages** - ([d9f1a3a](d9f1a3ad61d8c9e023c119107982a6e3af4dc3f5))
+
+
+- **Edited older messages now update immediately in chat view** - ([4583554](458355416af66fede10194b2a03c3ebea53bc259))
+
+
+- **Preventing long messages in select mode to jump** - ([0cbb053](0cbb053b978dc75818bd283ddf65854d098f3e84))
+
+
+
 ## [0.9.0] - 2026-05-26
 
 ### Features
