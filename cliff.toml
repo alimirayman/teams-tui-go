@@ -16,7 +16,7 @@ body = """
             **{{ commit.message | upper_first }}** - ([{{ commit.id | truncate(length=7, end="") }}]({{ commit.id }}))
             {% if commit.body %}
 
-          {{ commit.body | trim | replace(from="\n", to="\n          ") }}
+          > {{ commit.body | trim | replace(from="<", to="&lt;") | replace(from="\n", to="\n          > ") }}
             {% endif %}
     {% endfor %}
 {% endfor %}\n
