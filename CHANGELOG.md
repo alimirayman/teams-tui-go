@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.9.3] - 2026-05-28
+
+### Features
+
+- *(ui)* **Add favourite chats with persistent storage** - ([8cd3635](https://github.com/nospor/teams-tui-go/commit/8cd36355493a1f2ccfa75968bc22bc21e12a1585))
+
+
+> Pin any chat to the top of the sidebar with `f`. Favourites are stored
+> in ~/.config/teams-tui-go/favourites.json and restored on startup.
+> - Favourited chats are anchored at the top, sorted alphabetically by
+>   display name, regardless of message activity
+> - The ★ icon is shown in yellow next to favourited chats in the sidebar
+> - Remap chat search popup from `f` to `c` to free up `f` for favourites
+> - Gracefully handles favourited chats with old activity not in the
+>   current API load (preserved in file, shown once data is available)
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v0.9.2 [skip ci]** - ([f3167b9](https://github.com/nospor/teams-tui-go/commit/f3167b90091356c2befad2fd11e051ae882c38e8))
+
+
+
 ## [0.9.2] - 2026-05-27
 
 ### Bug Fixes
