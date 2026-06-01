@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.4] - 2026-06-01
+
+### Features
+
+- **Preview message in select mode** - ([32c3355](https://github.com/nospor/teams-tui-go/commit/32c3355e5946cd6d4625317f00e60104662df0a5))
+
+
+
+### Bug Fixes
+
+- **Reactions shows in chat lists now** - ([b10b0c0](https://github.com/nospor/teams-tui-go/commit/b10b0c036a97caa831f92f899881312e0504ae54))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v0.9.3 [skip ci]** - ([2b23adc](https://github.com/nospor/teams-tui-go/commit/2b23adc8bfbedd006b1ffe573685a9a93ef8d677))
+
+
+
 ## [0.9.3] - 2026-05-28
 
 ### Features
