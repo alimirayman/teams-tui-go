@@ -470,7 +470,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !m.lastReadReactions[msg.ChatID][rKey] {
 					for _, r := range msgObj.Reactions {
 						if getReactionKey(msgObj.ID, r) == rKey {
-							if isInit {
+							if isInit && m.isOldReaction(msgObj, r) {
 								m.lastReadReactions[msg.ChatID][rKey] = true
 							} else {
 								if !m.notifiedReactions[msg.ChatID][rKey] {
@@ -522,7 +522,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if !m.lastReadReactions[chatID][rKey] {
 						for _, r := range msgObj.Reactions {
 							if getReactionKey(msgObj.ID, r) == rKey {
-								if isInit {
+								if isInit && m.isOldReaction(msgObj, r) {
 									m.lastReadReactions[chatID][rKey] = true
 								} else {
 									if !m.notifiedReactions[chatID][rKey] {
@@ -615,7 +615,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if !m.lastReadReactions[chat.ID][rKey] {
 							for _, r := range msgObj.Reactions {
 								if getReactionKey(msgObj.ID, r) == rKey {
-									if isInit {
+									if isInit && m.isOldReaction(msgObj, r) {
 										m.lastReadReactions[chat.ID][rKey] = true
 									} else {
 										if !m.notifiedReactions[chat.ID][rKey] {
@@ -3108,6 +3108,19 @@ func (m Model) isOwnReaction(r MessageReaction) bool {
 		return true
 	}
 	return false
+}
+
+// isOldReaction checks if the reaction was created before the app started.
+func (m Model) isOldReaction(msg Message, r MessageReaction) bool {
+	if r.CreatedDateTime != nil {
+		if t, err := time.Parse(time.RFC3339, *r.CreatedDateTime); err == nil {
+			return t.Before(m.app.AppStartTime)
+		}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, msg.CreatedDateTime); err == nil {
+		return t.Before(m.app.AppStartTime)
+	}
+	return true
 }
 
 // getReactionKeys extracts unique reaction keys from a message, ignoring the current user's reactions.

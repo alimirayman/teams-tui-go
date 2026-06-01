@@ -86,8 +86,9 @@ func (msg *Message) GetPlainText() string {
 
 // MessageReaction represents a reaction to a message.
 type MessageReaction struct {
-	ReactionType string       `json:"reactionType"`
-	User         *MessageFrom `json:"user,omitempty"`
+	ReactionType    string       `json:"reactionType"`
+	CreatedDateTime *string      `json:"createdDateTime,omitempty"`
+	User            *MessageFrom `json:"user,omitempty"`
 }
 
 // MessageAttachment is a file or card attached to a message.
