@@ -67,66 +67,66 @@ func (n *NotificationMode) UnmarshalJSON(data []byte) error {
 
 // App holds all runtime state for the Teams TUI application.
 type App struct {
-	Chats           []Chat
-	Status          string
-	SearchStatus    string
-	SelectedIndex   int
-	CurrentUserName *string
-	CurrentUserID   string // used for markChatRead
-	Messages        []Message
-	LoadingMessages bool
-	SearchLoadingMessages bool
-	InputMode       bool
-	InputBuffer     string
-	ScrollOffset    int
-	MaxScroll       int
-	ChatScrollOffset int
-	SnapToBottom    bool
-	MessageSelectedIndex int
-	MessageSelectionMode bool
-	MessagePopupMode     bool
-	MessagePopupScrollOffset int
-	ReactionMode         bool
-	DeleteConfirmMode    bool
-	NotificationMode NotificationMode
-	NotificationShowPreview bool
-	NotificationPreviewLen  int
-	VisualBellUntil *time.Time
-	StatusUntil     *time.Time
-	SearchStatusUntil *time.Time
-	NextLink        string
-	PendingScrollID string
-	EditingMessageID *string
-	ReplyToMessage   *Message // set when user presses 'a' to reply-quote a message
-	UrlSelectionMode     bool
-	UrlSelectedIndex     int
-	UrlsInMessage        []string
-	MessageLineOffsets   []int
-	SearchMode           bool
-	SearchActive         bool
-	SearchQuery          string
-	SearchPopupMode      bool
-	SearchPopupSelectedIndex int
-	SearchPopupScrollOffset  int
-	SearchPopupResults   []SearchPopupItem
-	HistoryMessages      map[string][]Message
-	HistoryNextLink      map[string]string
-	HistoryInitialized   map[string]bool
-	SearchStates         map[string]*ChatSearchState
-	CachedMessages       map[string][]Message // per-chat message cache for instant restore on revisit
-	CachedNextLink       map[string]string    // per-chat NextLink cache
-	MainChatScrollOffset int
-	MainChatSnapToBottom bool
-	UserSearchPopupMode      bool
-	UserSearchMode           bool
-	UserSearchQuery          string
-	UserSearchStatus         string
-	UserSearchStatusUntil    *time.Time
-	UserSearchLocalResults   []Chat
+	Chats                      []Chat
+	Status                     string
+	SearchStatus               string
+	SelectedIndex              int
+	CurrentUserName            *string
+	CurrentUserID              string // used for markChatRead
+	Messages                   []Message
+	LoadingMessages            bool
+	SearchLoadingMessages      bool
+	InputMode                  bool
+	InputBuffer                string
+	ScrollOffset               int
+	MaxScroll                  int
+	ChatScrollOffset           int
+	SnapToBottom               bool
+	MessageSelectedIndex       int
+	MessageSelectionMode       bool
+	MessagePopupMode           bool
+	MessagePopupScrollOffset   int
+	ReactionMode               bool
+	DeleteConfirmMode          bool
+	NotificationMode           NotificationMode
+	NotificationShowPreview    bool
+	NotificationPreviewLen     int
+	VisualBellUntil            *time.Time
+	StatusUntil                *time.Time
+	SearchStatusUntil          *time.Time
+	NextLink                   string
+	PendingScrollID            string
+	EditingMessageID           *string
+	ReplyToMessage             *Message // set when user presses 'a' to reply-quote a message
+	UrlSelectionMode           bool
+	UrlSelectedIndex           int
+	UrlsInMessage              []string
+	MessageLineOffsets         []int
+	SearchMode                 bool
+	SearchActive               bool
+	SearchQuery                string
+	SearchPopupMode            bool
+	SearchPopupSelectedIndex   int
+	SearchPopupScrollOffset    int
+	SearchPopupResults         []SearchPopupItem
+	HistoryMessages            map[string][]Message
+	HistoryNextLink            map[string]string
+	HistoryInitialized         map[string]bool
+	SearchStates               map[string]*ChatSearchState
+	CachedMessages             map[string][]Message // per-chat message cache for instant restore on revisit
+	CachedNextLink             map[string]string    // per-chat NextLink cache
+	MainChatScrollOffset       int
+	MainChatSnapToBottom       bool
+	UserSearchPopupMode        bool
+	UserSearchMode             bool
+	UserSearchQuery            string
+	UserSearchStatus           string
+	UserSearchStatusUntil      *time.Time
+	UserSearchLocalResults     []Chat
 	UserSearchDirectoryResults []User
-	UserSearchSelectedIndex   int
-	UserSearchLoading        bool
-	AppStartTime             time.Time
+	UserSearchSelectedIndex    int
+	UserSearchLoading          bool
+	AppStartTime               time.Time
 }
 
 // ChatSearchState holds the search-specific query and viewport navigation state for a chat.
@@ -148,7 +148,7 @@ type SearchPopupItem struct {
 // NewApp creates an App with sensible initial defaults.
 func NewApp() *App {
 	return &App{
-		Status:           "Loading...",
+		Status:                  "Loading...",
 		SnapToBottom:            true,
 		NotificationMode:        NotificationNone,
 		NotificationShowPreview: false,

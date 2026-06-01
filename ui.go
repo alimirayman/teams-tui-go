@@ -2445,21 +2445,12 @@ func (m *Model) notify(senderName string, msg Message) {
 	}
 }
 
-// messageMatches reports whether the given message contains the case-insensitive query in its body, sender name, or attachment names.
+// messageMatches reports whether the given message contains the case-insensitive query in its body or attachment names.
 func (m Model) messageMatches(msg *Message, query string) bool {
 	if query == "" {
 		return true
 	}
 	normQuery := normalizeString(strings.TrimSpace(strings.ToLower(query)))
-
-	// Check sender
-	if msg.From != nil && msg.From.User != nil && msg.From.User.DisplayName != nil {
-		if strings.Contains(normalizeString(strings.ToLower(*msg.From.User.DisplayName)), normQuery) {
-			return true
-		}
-	} else if strings.Contains("me", normQuery) && m.isOwn(*msg) {
-		return true
-	}
 
 	// Check body
 	text := msg.GetPlainText()

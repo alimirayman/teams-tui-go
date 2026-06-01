@@ -141,8 +141,6 @@ func createChatCmd(clientID, myUserID, otherUPN string) tea.Cmd {
 	}
 }
 
-
-
 // sendMessageCmd sends a message to a chat in the background.
 func sendMessageCmd(clientID, chatID, content string) tea.Cmd {
 	return func() tea.Msg {
@@ -225,12 +223,12 @@ func sendDesktopNotification(senderName string, body string) {
 	if senderName != "" {
 		title = "TeamsTUI: " + senderName
 	}
-	
+
 	finalBody := "New message received"
 	if body != "" {
 		finalBody = body
 	}
-	
+
 	beeep.AppName = "TeamsTUI"
 	_ = beeep.Notify(title, finalBody, "")
 }
@@ -264,7 +262,7 @@ func loadInitialChatOrder(chats []Chat) ([]Chat, map[string]string, map[string]t
 			lastMsgIDs[c.ID] = c.LastMessagePreview.ID
 			lastMsgTimes[c.ID] = t
 		}
-		
+
 		// Fallback/override: if LastUpdated is set and is newer, use it.
 		if c.LastUpdated != nil {
 			lut, _ := time.Parse(time.RFC3339Nano, *c.LastUpdated)

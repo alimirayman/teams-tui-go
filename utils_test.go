@@ -64,3 +64,47 @@ func TestHighlightQuery(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageMatches(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
+	msg := Message{
+		ID: "1",
+		From: &MessageFrom{
+			User: &MessageUser{
+				DisplayName: strPtr("Alice Smith"),
+			},
+		},
+		Body: &MessageBody{
+			Content: strPtr("<p>Hello world from Go</p>"),
+		},
+		Attachments: []MessageAttachment{
+			{
+				Name: strPtr("report.pdf"),
+			},
+		},
+	}
+
+	model := Model{}
+
+	tests := []struct {
+		query    string
+		expected bool
+	}{
+		{"", true},
+		{"hello", true},
+		{"from Go", true},
+		{"report", true},
+		{"report.pdf", true},
+		{"Alice", false}, // Should NOT match creator display name
+		{"Smith", false}, // Should NOT match creator display name
+		{"nonexistent", false},
+	}
+
+	for _, test := range tests {
+		result := model.messageMatches(&msg, test.query)
+		if result != test.expected {
+			t.Errorf("messageMatches(query=%q) = %v; expected %v", test.query, result, test.expected)
+		}
+	}
+}

@@ -553,7 +553,6 @@ func UpdateMessage(accessToken, chatID, messageID, content string) error {
 	return graphPatch(accessToken, "/chats/"+chatID+"/messages/"+messageID, payload)
 }
 
-
 // ---------------------------------------------------------------------------
 // SetReaction
 // ---------------------------------------------------------------------------
@@ -1397,12 +1396,12 @@ func SearchUsers(accessToken, query string) ([]User, error) {
 	escaped := strings.ReplaceAll(query, "'", "''")
 	filterExpr := fmt.Sprintf("startsWith(displayName,'%s') or startsWith(userPrincipalName,'%s')", escaped, escaped)
 	path := "/users?$filter=" + url.QueryEscape(filterExpr) + "&$top=10"
-	
+
 	body, err := graphGet(accessToken, path)
 	if err != nil {
 		return nil, fmt.Errorf("SearchUsers: %w", err)
 	}
-	
+
 	var r struct {
 		Value []User `json:"value"`
 	}
@@ -1454,9 +1453,9 @@ func renderMessageReference(content string) string {
 	}
 
 	quoteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C7A89"))
-	barStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#4A90D9")).Bold(true)
-	nameStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#7EC8E3")).Bold(true)
-	timeStyle  := lipgloss.NewStyle().Foreground(lipgloss.Color("#4A5568"))
+	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#4A90D9")).Bold(true)
+	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7EC8E3")).Bold(true)
+	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#4A5568"))
 
 	bar := barStyle.Render("▎")
 
@@ -1481,13 +1480,13 @@ func GetOrCreateOneOnOneChat(accessToken, myUserID, otherUPN string) (*Chat, err
 		"chatType": "oneOnOne",
 		"members": []map[string]any{
 			{
-				"@odata.type": "#microsoft.graph.aadUserConversationMember",
-				"roles":       []string{"owner"},
+				"@odata.type":     "#microsoft.graph.aadUserConversationMember",
+				"roles":           []string{"owner"},
 				"user@odata.bind": fmt.Sprintf("https://graph.microsoft.com/v1.0/users('%s')", myUserID),
 			},
 			{
-				"@odata.type": "#microsoft.graph.aadUserConversationMember",
-				"roles":       []string{"owner"},
+				"@odata.type":     "#microsoft.graph.aadUserConversationMember",
+				"roles":           []string{"owner"},
 				"user@odata.bind": fmt.Sprintf("https://graph.microsoft.com/v1.0/users('%s')", otherUPN),
 			},
 		},
@@ -1508,5 +1507,3 @@ func GetOrCreateOneOnOneChat(accessToken, myUserID, otherUPN string) (*Chat, err
 
 	return &chat, nil
 }
-
-

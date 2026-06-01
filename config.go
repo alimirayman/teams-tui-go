@@ -212,7 +212,7 @@ func ResolveClientID() string {
 // ResolveMessageLimit returns the number of messages to fetch, using precedence:
 //  1. config.json -> message_limit
 //  2. Default (50)
-//  Note: Capped at 200 to prevent excessive API requests.
+//     Note: Capped at 200 to prevent excessive API requests.
 func ResolveMessageLimit() int {
 	cfg := LoadConfig()
 	if cfg != nil && cfg.MessageLimit != nil && *cfg.MessageLimit > 0 {
@@ -239,7 +239,7 @@ func ResolveSearchContextLimit() int {
 // ResolveChatLimit returns the number of chats to fetch, using precedence:
 //  1. config.json -> chat_limit
 //  2. Default (50)
-//  Note: Capped at 100 to prevent API throttling during concurrent member fetching.
+//     Note: Capped at 100 to prevent API throttling during concurrent member fetching.
 func ResolveChatLimit() int {
 	cfg := LoadConfig()
 	if cfg != nil && cfg.ChatLimit != nil && *cfg.ChatLimit > 0 {
