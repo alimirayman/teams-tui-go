@@ -955,6 +955,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes keyboard input and returns the updated model + command.
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if m.app.MessagePopupMode {
+		return m.handleMessagePopupKey(msg)
+	}
 	if m.app.InputMode {
 		return m.handleInputModeKey(msg)
 	}
@@ -1237,6 +1240,41 @@ func (m Model) handleSearchModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleMessagePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "v", "enter":
+		m.app.MessagePopupMode = false
+		return m, nil
+
+	case "j", "down":
+		if m.app.MessageSelectedIndex > 0 {
+			m.app.MessageSelectedIndex--
+			m.app.MessagePopupScrollOffset = 0
+		}
+
+	case "k", "up":
+		if m.app.MessageSelectedIndex < len(m.app.Messages)-1 {
+			m.app.MessageSelectedIndex++
+			m.app.MessagePopupScrollOffset = 0
+		} else if m.app.NextLink != "" && !m.app.LoadingMessages {
+			// Already at the oldest loaded message — fetch the next page.
+			m.app.SetLoadingMessages(true)
+			m.app.MessagePopupScrollOffset = 0
+			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.app.SelectedIndex, false)
+		}
+
+	case "J", "shift+down", "pgdown":
+		m.app.MessagePopupScrollOffset += 3
+
+	case "K", "shift+up", "pgup":
+		m.app.MessagePopupScrollOffset -= 3
+		if m.app.MessagePopupScrollOffset < 0 {
+			m.app.MessagePopupScrollOffset = 0
+		}
+	}
+	return m, nil
+}
+
 func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "m":
@@ -1336,6 +1374,12 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 					m.app.UrlsInMessage = urls
 				}
 			}
+		}
+		return m, nil
+	case "v":
+		if len(m.app.Messages) > 0 && m.app.MessageSelectedIndex < len(m.app.Messages) {
+			m.app.MessagePopupMode = true
+			m.app.MessagePopupScrollOffset = 0
 		}
 		return m, nil
 	}
@@ -1522,6 +1566,19 @@ func (m Model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	}
 
+	if m.app.MessagePopupMode {
+		popupW := m.width * 85 / 100
+		popupH := m.height * 80 / 100
+		if popupW < 40 {
+			popupW = 40
+		}
+		if popupH < 10 {
+			popupH = 10
+		}
+		modal := m.renderMessagePopup(popupW, popupH)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	}
+
 	return mainView
 }
 
@@ -1530,7 +1587,7 @@ func (m Model) renderRightPanel(w, h int) string {
 	if !m.app.InputMode {
 		title := "Messages (i:compose, m:select, K/J:scroll, /:search)"
 		if m.app.MessageSelectionMode {
-			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, d:delete, e:edit, a:answer, ESC/m:exit)"
+			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, d:delete, e:edit, a:answer, v:view, ESC/m:exit)"
 		}
 		msgContent := m.renderMessages(w, h-1)
 		return normalBorder.Width(w).Height(h).
@@ -3468,4 +3525,224 @@ func (m Model) renderUserSearchPopup(w, h int) string {
 		Render(list.String())
 
 	return box
+}
+
+func (m Model) renderMessagePopup(w, h int) string {
+	if len(m.app.Messages) == 0 || m.app.MessageSelectedIndex < 0 || m.app.MessageSelectedIndex >= len(m.app.Messages) {
+		return ""
+	}
+
+	msg := m.app.Messages[m.app.MessageSelectedIndex]
+
+	sender := "Unknown"
+	if msg.From != nil && msg.From.User != nil && msg.From.User.DisplayName != nil {
+		sender = *msg.From.User.DisplayName
+		if m.app.CurrentUserName != nil && sender == *m.app.CurrentUserName {
+			sender = "Me"
+		}
+	}
+
+	msgTime, _ := time.Parse(time.RFC3339Nano, msg.CreatedDateTime)
+	msgTime = msgTime.Local()
+	timeStr := ""
+	if !msgTime.IsZero() {
+		timeStr = msgTime.Format("Jan 02, 2006 15:04:05")
+	}
+
+	innerW := w - 6
+	innerH := h - 4
+	if innerW < 10 {
+		innerW = 10
+	}
+	if innerH < 4 {
+		innerH = 4
+	}
+
+	headerLines := []string{
+		lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("From: ") + sender,
+		lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("Date: ") + timeStr,
+		"",
+	}
+
+	attachmentsLines := []string{}
+	if len(msg.Attachments) > 0 {
+		attachmentsLines = append(attachmentsLines, lipgloss.NewStyle().Foreground(colYellow).Bold(true).Render("Attachments:"))
+		for _, att := range msg.Attachments {
+			name := "Unnamed attachment"
+			if att.Name != nil && *att.Name != "" {
+				name = *att.Name
+			}
+			contentType := ""
+			if att.ContentType != nil && *att.ContentType != "" {
+				contentType = fmt.Sprintf(" (%s)", *att.ContentType)
+			}
+			attachmentsLines = append(attachmentsLines, fmt.Sprintf("  📎 %s%s", name, contentType))
+		}
+	}
+
+	reactionsLines := []string{}
+	reactionsGrouped := make(map[string][]string)
+	var reactionOrder []string
+	seenReactions := make(map[string]bool)
+
+	for _, r := range msg.Reactions {
+		rType := strings.ToLower(r.ReactionType)
+		emoji := reactionEmoji(rType)
+		name := m.resolveReactorName(r)
+
+		reactionsGrouped[emoji] = append(reactionsGrouped[emoji], name)
+		if !seenReactions[emoji] {
+			seenReactions[emoji] = true
+			reactionOrder = append(reactionOrder, emoji)
+		}
+	}
+
+	if len(msg.Reactions) > 0 {
+		reactionsLines = append(reactionsLines, lipgloss.NewStyle().Foreground(colYellow).Bold(true).Render("Reactions:"))
+		for _, emoji := range reactionOrder {
+			names := reactionsGrouped[emoji]
+			sort.Strings(names)
+			namesStr := strings.Join(names, ", ")
+			wrappedReactors := wordWrap(namesStr, innerW-6)
+			for i, wrLine := range wrappedReactors {
+				if i == 0 {
+					reactionsLines = append(reactionsLines, fmt.Sprintf("  %s %s", emoji, wrLine))
+				} else {
+					reactionsLines = append(reactionsLines, fmt.Sprintf("    %s", wrLine))
+				}
+			}
+		}
+	}
+
+	footer := lipgloss.NewStyle().Foreground(colDimGray).Italic(true).Render("Press ESC/q/v/Enter to close | j/k to navigate | J/K to scroll")
+
+	nonBodyH := len(headerLines) + 1
+	if len(attachmentsLines) > 0 {
+		nonBodyH += len(attachmentsLines) + 1
+	}
+	if len(reactionsLines) > 0 {
+		nonBodyH += len(reactionsLines) + 1
+	}
+
+	bodyMaxH := innerH - nonBodyH
+	if bodyMaxH < 4 {
+		bodyMaxH = 4
+	}
+
+	body := msg.GetPlainText()
+	var wrappedBody []string
+	if body != "" {
+		wrappedBody = wordWrap(body, innerW)
+	}
+
+	var bodyLines []string
+	if len(wrappedBody) > 0 {
+		viewportH := bodyMaxH - 2
+		if viewportH < 1 {
+			viewportH = 1
+		}
+
+		maxScroll := len(wrappedBody) - viewportH
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		if m.app.MessagePopupScrollOffset > maxScroll {
+			m.app.MessagePopupScrollOffset = maxScroll
+		}
+		if m.app.MessagePopupScrollOffset < 0 {
+			m.app.MessagePopupScrollOffset = 0
+		}
+
+		visibleBody := wrappedBody
+		if len(wrappedBody) > viewportH {
+			start := m.app.MessagePopupScrollOffset
+			end := start + viewportH
+			if end > len(wrappedBody) {
+				end = len(wrappedBody)
+			}
+			visibleBody = wrappedBody[start:end]
+		}
+
+		headerText := lipgloss.NewStyle().Foreground(colYellow).Bold(true).Render("Message:")
+		if len(wrappedBody) > viewportH {
+			headerText += lipgloss.NewStyle().Foreground(colDimGray).Render(fmt.Sprintf(" (Shift+J/K to scroll - %d/%d)", m.app.MessagePopupScrollOffset+1, len(wrappedBody)))
+		}
+		bodyLines = append(bodyLines, headerText)
+		bodyLines = append(bodyLines, visibleBody...)
+		bodyLines = append(bodyLines, "")
+	}
+
+	var finalLines []string
+	finalLines = append(finalLines, headerLines...)
+	finalLines = append(finalLines, bodyLines...)
+	if len(attachmentsLines) > 0 {
+		finalLines = append(finalLines, attachmentsLines...)
+		finalLines = append(finalLines, "")
+	}
+	if len(reactionsLines) > 0 {
+		finalLines = append(finalLines, reactionsLines...)
+		finalLines = append(finalLines, "")
+	}
+
+	targetH := innerH - 1
+	if len(finalLines) > targetH {
+		finalLines = finalLines[:targetH]
+	} else {
+		for len(finalLines) < targetH {
+			finalLines = append(finalLines, "")
+		}
+	}
+	finalLines = append(finalLines, footer)
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colCyan).
+		Padding(1, 2).
+		Width(w).Height(h).
+		Render(strings.Join(finalLines, "\n"))
+
+	return box
+}
+
+func (m Model) resolveReactorName(r MessageReaction) string {
+	if r.User == nil || r.User.User == nil {
+		return "Someone"
+	}
+
+	if r.User.User.ID != nil && *r.User.User.ID != "" && m.app.CurrentUserID != "" && *r.User.User.ID == m.app.CurrentUserID {
+		return "Me"
+	}
+	if r.User.User.DisplayName != nil && *r.User.User.DisplayName != "" {
+		if m.app.CurrentUserName != nil && *r.User.User.DisplayName == *m.app.CurrentUserName {
+			return "Me"
+		}
+	}
+
+	if r.User.User.DisplayName != nil && *r.User.User.DisplayName != "" {
+		return *r.User.User.DisplayName
+	}
+
+	if r.User.User.ID != nil && *r.User.User.ID != "" {
+		if chat := m.app.GetSelectedChat(); chat != nil {
+			for _, member := range chat.Members {
+				match := false
+				if member.UserID != nil && *member.UserID == *r.User.User.ID {
+					match = true
+				} else if member.ID != nil && *member.ID == *r.User.User.ID {
+					match = true
+				}
+				if match {
+					if member.DisplayName != nil && *member.DisplayName != "" {
+						return *member.DisplayName
+					}
+				}
+			}
+		}
+	}
+
+	if r.User.User.ID != nil && *r.User.User.ID != "" {
+		return *r.User.User.ID
+	}
+
+	return "Someone"
 }

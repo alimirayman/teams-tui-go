@@ -30,6 +30,7 @@ const graphAPIBeta = "https://graph.microsoft.com/beta"
 // ChatMember represents a participant in a chat.
 type ChatMember struct {
 	ID          *string `json:"id,omitempty"`
+	UserID      *string `json:"userId,omitempty"`
 	DisplayName *string `json:"displayName,omitempty"`
 	Email       *string `json:"email,omitempty"`
 }

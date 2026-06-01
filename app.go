@@ -84,6 +84,8 @@ type App struct {
 	SnapToBottom    bool
 	MessageSelectedIndex int
 	MessageSelectionMode bool
+	MessagePopupMode     bool
+	MessagePopupScrollOffset int
 	ReactionMode         bool
 	DeleteConfirmMode    bool
 	NotificationMode NotificationMode

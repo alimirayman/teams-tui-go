@@ -213,6 +213,7 @@ When you press `e` to edit an existing message the edit box is pre-filled with t
 | `Esc`        | Cancel compose                                            |
 | `n`          | Toggle notification mode                                  |
 | `m`          | Enter/Exit **Message Mode** (to select/react/delete/copy) |
+| `v`          | View details/reactions of selected message (in Message Mode) |
 | `r`          | React to selected message (in Message Mode)               |
 | `y`          | Copy (yank) message text (in Message Mode)                |
 | `u`          | Copy (yank) URL from message (in Message Mode)            |

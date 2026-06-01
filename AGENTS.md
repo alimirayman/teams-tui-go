@@ -77,7 +77,12 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
   - Displays a filtered list of local chats.
   - In navigation mode, `j`/`k` move the selection, `/` refocuses the input, and `Enter` opens the selected local chat.
   - On success of `createChatCmd`, the chat is added/promoted, stable order is rebuilt, and the chat is opened and selected automatically.
-
+- **Message View/Preview Popup**:
+  - Activated by pressing the `v` key in message selection mode (`m` in normal mode).
+  - Opens a fullscreen-budgeted modal overlay popup displaying the full message body, sender info, exact timestamps, listed attachments, and grouped reactions.
+  - Groups reaction emojis and maps reactor user IDs to their actual names and surnames by looking them up in the cached chat members list.
+  - While active, `j`/`k` (or `down`/`up` arrow keys) navigate directly to younger/older messages in the chat history, instantly updating the popup contents, and automatically fetching older messages when reaching the top.
+  - If a message is too long to fit in the popup, the message body becomes a scrollable viewport using `Shift+J`/`Shift+K` (or `Shift+down`/`Shift+up`), keeping the header, reactions, and attachments visible at all times.
 
 ### Main / Entry Point (`main.go`)
 - Startup: banner → auth → profile → chats (with expanded last message preview) → sort → init model → run
