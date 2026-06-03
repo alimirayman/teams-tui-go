@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.9.5] - 2026-06-03
+
+### Features
+
+- **Add customizable chat type icons and themes** - ([5f47863](https://github.com/nospor/teams-tui-go/commit/5f478630330e39422570ffb26915f78e68e9a3f6))
+
+
+- *(search)* **Implement accent-insensitive matching for chats and messages** - ([64d46b0](https://github.com/nospor/teams-tui-go/commit/64d46b06fb005b3d8f866ac972c643858134280f))
+
+
+
+### Bug Fixes
+
+- *(api)* **Deduplicate chats returned by GetChats to prevent sidebar duplicates** - ([5cecd84](https://github.com/nospor/teams-tui-go/commit/5cecd845477737583c978127a3f135f108d3de33))
+
+
+> The Microsoft Graph API can return the same chat on multiple pages when
+> a new message arrives mid-pagination (cursor drift: the chat shifts
+> position between page fetches). Without deduplication, the same chat ID
+> could appear twice in the initial stableChatOrder, causing it to render
+> twice in the sidebar.
+> 
+> Added a dedup pass in GetChats() after all pages are collected. When
+> a duplicate ID is found, we keep the entry with the newer last-message
+> or last-updated timestamp so that fresh data always wins.
+
+
+- *(ui)* **Prevent new chats from being missed during background refresh** - ([d6f8a0d](https://github.com/nospor/teams-tui-go/commit/d6f8a0dfe5196547f2f0e63b768bb74afc509a04))
+
+
+> - Remove redundant loadChatsCmd from Init() since the initial chat list is already loaded synchronously in main.go. This prevents a potential concurrent race condition with the first tick-driven refresh.
+> - Set model.lastChatRefresh = time.Now() at startup in main.go so the first tick refresh triggers 15s after startup rather than immediately.
+> - In mergeChats(), check c.LastMessagePreview != nil directly instead of checking m.lastMsgID to determine whether a chat is new and has messages, removing a fragile dependency on event handler loop ordering.
+> - Remove unused freshByID map from mergeChats().
+> - Update AGENTS.md documentation to reflect these architectural changes.
+
+
+- *(search)* **Exclude message creators from chat history search** - ([afd4be1](https://github.com/nospor/teams-tui-go/commit/afd4be10f662555b714d26a279951bb2009305cd))
+
+
+
+### Other
+
+- **Merge branch 'main' of github.com:nospor/teams-tui-go** - ([968b869](https://github.com/nospor/teams-tui-go/commit/968b869018009bd7c53fe05ed21f1c19c0ea0531))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v0.9.4 [skip ci]** - ([6911999](https://github.com/nospor/teams-tui-go/commit/691199926c1e496fb11674ad1220c7268162d0ef))
+
+
+
 ## [0.9.4] - 2026-06-01
 
 ### Features
