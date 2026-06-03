@@ -692,6 +692,45 @@ func GetChats(accessToken string, existingChats []Chat, currentUserName *string)
 	}
 	chats = filtered
 
+	// Deduplicate chats by ID. The Graph API can return the same chat on
+	// multiple pages when a new message causes it to shift position during
+	// pagination (cursor drift). Keep the entry with the newest timestamp.
+	{
+		seen := make(map[string]int, len(chats)) // ID → index in deduped slice
+		deduped := make([]Chat, 0, len(chats))
+		for _, c := range chats {
+			if idx, ok := seen[c.ID]; ok {
+				// Replace only if this copy has a newer last-message time.
+				existing := deduped[idx]
+				existingT := time.Time{}
+				if existing.LastMessagePreview != nil {
+					existingT, _ = time.Parse(time.RFC3339Nano, existing.LastMessagePreview.CreatedDateTime)
+				}
+				if existing.LastUpdated != nil {
+					if lut, err := time.Parse(time.RFC3339Nano, *existing.LastUpdated); err == nil && lut.After(existingT) {
+						existingT = lut
+					}
+				}
+				newT := time.Time{}
+				if c.LastMessagePreview != nil {
+					newT, _ = time.Parse(time.RFC3339Nano, c.LastMessagePreview.CreatedDateTime)
+				}
+				if c.LastUpdated != nil {
+					if lut, err := time.Parse(time.RFC3339Nano, *c.LastUpdated); err == nil && lut.After(newT) {
+						newT = lut
+					}
+				}
+				if newT.After(existingT) {
+					deduped[idx] = c
+				}
+			} else {
+				seen[c.ID] = len(deduped)
+				deduped = append(deduped, c)
+			}
+		}
+		chats = deduped
+	}
+
 	// Sort the entire list of chats by latest activity (message or update time) descending.
 	type chatWithTime struct {
 		chat Chat
