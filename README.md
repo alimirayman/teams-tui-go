@@ -128,6 +128,32 @@ Configure how many context messages (before and after each search match) to disp
   ```
   - `search_context_limit`: The number of context messages before and after each match to include (default: 3).
 
+### Chat Icon Themes
+You can configure the style of chat type indicators in the sidebar using `~/.config/teams-tui-go/config.json`:
+
+```json
+{
+  "chat_icon_theme": "unicode"
+}
+```
+- `chat_icon_theme`: Choose between presets (default: `"unicode"`):
+  - `"unicode"`: Minimal single-width geometric icons (`◉` 1:1, `⊞` group, `⊛` meeting).
+  - `"emoji"`: Colorful emojis (`👤` 1:1, `👥` group, `📅` meeting).
+  - `"text"`: The original bracketed text headers (`[oneOnOne]`, `[group]`, `[meeting]`).
+
+You can also completely override icons individually by defining a `"custom_chat_icons"` map:
+
+```json
+{
+  "custom_chat_icons": {
+    "oneOnOne": "💬",
+    "group": "👥",
+    "meeting": "⏱️",
+    "default": "◈"
+  }
+}
+```
+
 ---
 
 ## Usage

@@ -364,6 +364,12 @@ func main() {
 		if cfg.NotificationPreviewLen != nil {
 			app.NotificationPreviewLen = *cfg.NotificationPreviewLen
 		}
+		if cfg.ChatIconTheme != nil {
+			app.ChatIconTheme = *cfg.ChatIconTheme
+		}
+		if cfg.CustomChatIcons != nil {
+			app.CustomChatIcons = cfg.CustomChatIcons
+		}
 	}
 
 	// Build initial stable chat order.

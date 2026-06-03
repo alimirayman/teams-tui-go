@@ -1,5 +1,12 @@
 # AI Agent Instructions
 
+---
+
+> [!CAUTION]
+> **Never run git write commands** (`git commit`, `git push`, `git tag`, `git rebase`, `git merge`, `git reset`, `git stash`, etc.) unless the user **explicitly requests** it. Only read-only git commands (`git status`, `git diff`, `git log`) may be run freely.
+
+---
+
 ## Project Overview
 
 Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 Device Code Flow and displays chats and messages using the Microsoft Graph API. Built with the Bubble Tea TUI framework (MVU architecture).
@@ -18,9 +25,9 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 ### Configuration (`config.go`)
 - App data: `~/.config/teams-tui-go/` (via `GetAppDir()`)
 - Cache: `~/.cache/teams-tui-go/` (via `GetCacheDir()`)
-- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`, `NotificationShowPreview *bool`, `NotificationPreviewLen *int`, `MessageLimit *int`, `SearchContextLimit *int`, `ChatLimit *int`
+- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`, `NotificationShowPreview *bool`, `NotificationPreviewLen *int`, `MessageLimit *int`, `SearchContextLimit *int`, `ChatLimit *int`, `ChatIconTheme *string`, `CustomChatIcons map[string]string`
 - `ResolveClientID()`, `ResolveMessageLimit()`, `ResolveSearchContextLimit()`, and `ResolveChatLimit()` implement the full precedence chain
-- `InitConfig()` is run at application startup to populate any missing configuration keys in `config.json` with their default values and persist them to disk
+- `InitConfig()` is run at application startup to populate any missing configuration keys in `config.json` with their default values and persist them to disk. It defaults `ChatIconTheme` to `"unicode"`.
 
 ### API Layer (`api.go`)
 - **User Detection**: Identifies the current user by counting name frequency across `oneOnOne` chats

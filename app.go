@@ -127,6 +127,8 @@ type App struct {
 	UserSearchSelectedIndex    int
 	UserSearchLoading          bool
 	AppStartTime               time.Time
+	ChatIconTheme              string
+	CustomChatIcons            map[string]string
 }
 
 // ChatSearchState holds the search-specific query and viewport navigation state for a chat.
@@ -159,6 +161,8 @@ func NewApp() *App {
 		SearchStates:            make(map[string]*ChatSearchState),
 		CachedMessages:          make(map[string][]Message),
 		CachedNextLink:          make(map[string]string),
+		ChatIconTheme:           "unicode",
+		CustomChatIcons:         make(map[string]string),
 		AppStartTime:            time.Now(),
 	}
 }

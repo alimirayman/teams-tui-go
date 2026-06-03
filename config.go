@@ -69,6 +69,8 @@ type Config struct {
 	MessageLimit            *int              `json:"message_limit,omitempty"`
 	SearchContextLimit      *int              `json:"search_context_limit,omitempty"`
 	ChatLimit               *int              `json:"chat_limit,omitempty"`
+	ChatIconTheme           *string           `json:"chat_icon_theme,omitempty"`
+	CustomChatIcons         map[string]string `json:"custom_chat_icons,omitempty"`
 }
 
 // GetAppDir returns ~/.config/teams-tui-go/, creating it if necessary.
@@ -170,6 +172,11 @@ func InitConfig() {
 	if cfg.ChatLimit == nil {
 		limit := 50
 		cfg.ChatLimit = &limit
+		modified = true
+	}
+	if cfg.ChatIconTheme == nil {
+		theme := "unicode"
+		cfg.ChatIconTheme = &theme
 		modified = true
 	}
 

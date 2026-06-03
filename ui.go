@@ -1681,6 +1681,58 @@ func (m Model) renderRightPanel(w, h int) string {
 // Chat list rendering
 // ---------------------------------------------------------------------------
 
+// chatTypeToIcon maps a Graph API chatType string to an icon or label based on configuration.
+func (m Model) chatTypeToIcon(chatType string) string {
+	// 1. Check custom overrides
+	if icon, ok := m.app.CustomChatIcons[chatType]; ok {
+		return icon
+	}
+	if chatType != "default" {
+		if icon, ok := m.app.CustomChatIcons["default"]; ok {
+			return icon
+		}
+	}
+
+	// 2. Preset themes
+	switch m.app.ChatIconTheme {
+	case "emoji":
+		switch chatType {
+		case "oneOnOne":
+			return "👤"
+		case "group":
+			return "👥"
+		case "meeting":
+			return "📅"
+		default:
+			return "💬"
+		}
+	case "text":
+		switch chatType {
+		case "oneOnOne":
+			return "[oneOnOne]"
+		case "group":
+			return "[group]"
+		case "meeting":
+			return "[meeting]"
+		default:
+			return "[" + chatType + "]"
+		}
+	case "unicode":
+		fallthrough
+	default:
+		switch chatType {
+		case "oneOnOne":
+			return "◉"
+		case "group":
+			return "⊞"
+		case "meeting":
+			return "⊛"
+		default:
+			return "◈"
+		}
+	}
+}
+
 func (m Model) renderChatList(w, h int) string {
 	title := lipgloss.NewStyle().Foreground(colDimGray).
 		Render("Chats (j/k: nav, c: find, f: ★ fav, q: quit)")
@@ -1710,7 +1762,7 @@ func (m Model) renderChatList(w, h int) string {
 
 	for i := start; i < end; i++ {
 		c := m.app.Chats[i]
-		chatType := c.ChatType
+		chatTypeIcon := m.chatTypeToIcon(c.ChatType)
 		displayName := ""
 		if c.CachedDisplayName != nil {
 			displayName = *c.CachedDisplayName
@@ -1731,7 +1783,7 @@ func (m Model) renderChatList(w, h int) string {
 			prefix += reactionEmoji + " "
 		}
 
-		labelStr := prefix + "[" + chatType + "] " + displayName
+		labelStr := prefix + chatTypeIcon + " " + displayName
 
 		var label string
 		if i == m.app.SelectedIndex {
@@ -1743,7 +1795,7 @@ func (m Model) renderChatList(w, h int) string {
 				MaxWidth(w).
 				Render(labelStr)
 		} else {
-			typeTag := lipgloss.NewStyle().Foreground(colCyan).Render("[" + chatType + "]")
+			typeTag := lipgloss.NewStyle().Foreground(colCyan).Render(chatTypeIcon)
 			base := typeTag + " " + displayName
 			if isFav {
 				star := lipgloss.NewStyle().Foreground(colYellow).Render("★ ")
