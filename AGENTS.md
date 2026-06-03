@@ -43,6 +43,8 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 - Stable chat ordering maintained in `stableChatOrder []string` (list of chat IDs)
   - Only changes when a new message arrives (chat → position 0) or a brand-new chat is added
   - On every API refresh the display list is **rebuilt** from `stableChatOrder`
+  - `mergeChats()` adds brand-new chats from the API result by checking `c.LastMessagePreview != nil` directly (not via `m.lastMsgID`) — chats with a preview go to the top; chats without are appended
+  - `Init()` does **not** fire `loadChatsCmd` — initial chats are already loaded synchronously in `main.go`; the first background refresh fires ~15 s after startup via the tick timer
 - **Favourites**:
   - Stored in `Model.favourites map[string]bool` (chat ID set)
   - Persisted to `~/.config/teams-tui-go/favourites.json` via `LoadFavourites()` / `SaveFavourites()`

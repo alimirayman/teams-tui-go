@@ -220,10 +220,12 @@ func NewModel(app *App, clientID, userID string) Model {
 // ---------------------------------------------------------------------------
 
 // Init issues the first tick command to start the event loop.
+// Note: the initial chat list is already loaded synchronously in main.go, so
+// we do not fire a redundant loadChatsCmd here. The periodic tick handles all
+// subsequent refreshes.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		tickCmd(),
-		loadChatsCmd(m.clientID, m.app.Chats, m.app.CurrentUserName),
 		func() tea.Msg {
 			fmt.Print("\x1b[?1004h") // Enable focus reporting
 			return nil
@@ -2291,18 +2293,14 @@ func (m Model) mergeChats(fresh []Chat) Model {
 		known[id] = true
 	}
 
-	// Determine which chats are new.
-	freshByID := make(map[string]Chat, len(fresh))
-	for _, c := range fresh {
-		freshByID[c.ID] = c
-	}
-
-	// Add new chats.
+	// Add new chats. Use LastMessagePreview directly to determine whether the
+	// chat has a message — this avoids depending on m.lastMsgID being populated
+	// by the loop in MsgChatsLoaded (a fragile side-effect ordering dependency).
 	var newWithMsg []string
 	var newWithout []string
 	for _, c := range fresh {
 		if !known[c.ID] {
-			if _, hasMsg := m.lastMsgID[c.ID]; hasMsg {
+			if c.LastMessagePreview != nil {
 				newWithMsg = append(newWithMsg, c.ID)
 			} else {
 				newWithout = append(newWithout, c.ID)

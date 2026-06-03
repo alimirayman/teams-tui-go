@@ -368,6 +368,10 @@ func main() {
 
 	// Build initial stable chat order.
 	model := NewModel(app, clientID, me.ID)
+	// Chats are already loaded synchronously above; set lastChatRefresh so the
+	// first tick-driven background refresh fires ~15 s from now rather than
+	// immediately (Init() no longer fires a redundant loadChatsCmd).
+	model.lastChatRefresh = time.Now()
 	model.latestChats = chats
 	model.lastMsgID = lastMsgIDs
 	model.lastMsgTime = lastMsgTimes
