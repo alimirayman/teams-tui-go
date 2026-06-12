@@ -1519,10 +1519,19 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			if entry.teamID != m.app.SelectedChannelTeamID || entry.channelID != m.app.SelectedChannelID {
 				m.app.SelectedChannelTeamID = entry.teamID
 				m.app.SelectedChannelID = entry.channelID
-				m.app.Messages = nil
-				m.app.NextLink = ""
-				m.app.SetLoadingMessages(true)
-				m.app.SnapToBottom = true
+				m.lastMessageRefresh = time.Now()
+				// If we have cached messages, show them immediately to avoid a blank screen
+				if cached, ok := m.app.CachedMessages[entry.channelID]; ok && len(cached) > 0 {
+					m.app.Messages = cached
+					m.app.NextLink = m.app.CachedNextLink[entry.channelID]
+					m.app.SetLoadingMessages(false)
+					m.app.SnapToBottom = true
+				} else {
+					m.app.Messages = nil
+					m.app.NextLink = ""
+					m.app.SetLoadingMessages(true)
+					m.app.SnapToBottom = true
+				}
 				return m, loadChannelMessagesCmd(m.clientID, entry.teamID, entry.channelID)
 			}
 		}
