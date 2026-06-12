@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.0.3] - 2026-06-12
+
+### Features
+
+- *(channels)* **Add background loading, activity sorting, and hidden channels** - ([a6f3f11](https://github.com/nospor/teams-tui-go/commit/a6f3f11eedb1db0c10095d58f151473a871e02b9))
+
+
+> - Add `channel_msg_refresh_min` configuration parameter (default: 2
+> minutes).
+> - Group unhidden channels at the top, sorted by latest message activity.
+> - Keep hidden channels at the bottom in their original default order.
+> - Toggle channel hidden state using the `h` key in normal mode.
+> - Render hidden channels in a grayed-out color (`colDimGray`) and skip
+> them in background polling.
+> - Pause background and active channel polling when in sleep/idle mode.
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.0.2 [skip ci]** - ([9906c8a](https://github.com/nospor/teams-tui-go/commit/9906c8af853df3a76ce4c78269cf13195a63c032))
+
+
+
 ## [1.0.2] - 2026-06-12
 
 ### Features
