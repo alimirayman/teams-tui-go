@@ -14,7 +14,6 @@ import (
 
 const (
 	tenant = "common"
-	scopes = "User.Read Chat.ReadWrite offline_access"
 )
 
 var (
@@ -94,7 +93,7 @@ func loadToken() (*TokenResponse, error) {
 }
 
 // StartDeviceFlow initiates the OAuth2 device code flow.
-func StartDeviceFlow(clientID string) (*DeviceCodeResponse, error) {
+func StartDeviceFlow(clientID, scopes string) (*DeviceCodeResponse, error) {
 	form := url.Values{
 		"client_id": {clientID},
 		"scope":     {scopes},
@@ -168,7 +167,7 @@ func PollForToken(clientID, deviceCode string, interval int) (*TokenResponse, er
 }
 
 // RefreshAccessToken uses the refresh token to obtain a new access token.
-func RefreshAccessToken(clientID, refreshToken string) (*TokenResponse, error) {
+func RefreshAccessToken(clientID, refreshToken, scopes string) (*TokenResponse, error) {
 	form := url.Values{
 		"client_id":     {clientID},
 		"grant_type":    {"refresh_token"},
@@ -222,7 +221,7 @@ func GetValidTokenSilent(clientID string) (string, error) {
 	if token.RefreshToken == nil || *token.RefreshToken == "" {
 		return "", fmt.Errorf("token expired and no refresh token available")
 	}
-	newToken, err := RefreshAccessToken(clientID, *token.RefreshToken)
+	newToken, err := RefreshAccessToken(clientID, *token.RefreshToken, BuildScopes())
 	if err != nil {
 		return "", fmt.Errorf("token refresh failed: %w", err)
 	}
@@ -237,7 +236,7 @@ func GetAccessToken(clientID string) (string, error) {
 	}
 
 	// Full device code flow.
-	dc, err := StartDeviceFlow(clientID)
+	dc, err := StartDeviceFlow(clientID, BuildScopes())
 	if err != nil {
 		return "", fmt.Errorf("could not start device flow: %w", err)
 	}

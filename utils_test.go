@@ -108,3 +108,66 @@ func TestMessageMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractAndProcessInlineImages(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
+	htmlContent := `<p>Check out this image: <img src="https://graph.microsoft.com/v1.0/chats/123/messages/456/hostedContents/abc/$value" alt="My screenshot" /> and another: <img src="https://graph.microsoft.com/v1.0/chats/123/messages/456/hostedContents/def/$value" /></p>`
+
+	// Test ExtractInlineImages
+	inlineAtts := ExtractInlineImages(htmlContent)
+	if len(inlineAtts) != 2 {
+		t.Fatalf("expected 2 inline images, got %d", len(inlineAtts))
+	}
+
+	if *inlineAtts[0].Name != "My screenshot.png" {
+		t.Errorf("expected first name 'My screenshot.png', got %q", *inlineAtts[0].Name)
+	}
+	if *inlineAtts[0].ContentURL != "https://graph.microsoft.com/v1.0/chats/123/messages/456/hostedContents/abc/$value" {
+		t.Errorf("expected first URL to match, got %q", *inlineAtts[0].ContentURL)
+	}
+
+	if *inlineAtts[1].Name != "inline-image-2.png" {
+		t.Errorf("expected second name 'inline-image-2.png', got %q", *inlineAtts[1].Name)
+	}
+	if *inlineAtts[1].ContentURL != "https://graph.microsoft.com/v1.0/chats/123/messages/456/hostedContents/def/$value" {
+		t.Errorf("expected second URL to match, got %q", *inlineAtts[1].ContentURL)
+	}
+
+	// Test ProcessInlineImages
+	msg := Message{
+		ID: "1",
+		Body: &MessageBody{
+			Content: strPtr(htmlContent),
+		},
+		Attachments: []MessageAttachment{
+			{
+				ID:         "existing-doc",
+				Name:       strPtr("report.pdf"),
+				ContentURL: strPtr("https://sharepoint.com/report.pdf"),
+			},
+		},
+	}
+
+	msg.ProcessInlineImages()
+
+	if len(msg.Attachments) != 3 {
+		t.Errorf("expected 3 attachments after processing inline images, got %d", len(msg.Attachments))
+	}
+
+	// Double processing check
+	msg.ProcessInlineImages()
+	if len(msg.Attachments) != 3 {
+		t.Errorf("expected attachments count to remain 3 on double processing, got %d", len(msg.Attachments))
+	}
+
+	// Test HTMLToText inline image naming
+	plainText := HTMLToText(htmlContent, msg.Attachments)
+	if !strings.Contains(plainText, "My screenshot.png") {
+		t.Errorf("expected plainText to contain 'My screenshot.png', got %q", plainText)
+	}
+	if !strings.Contains(plainText, "inline-image-2.png") {
+		t.Errorf("expected plainText to contain 'inline-image-2.png', got %q", plainText)
+	}
+}
+

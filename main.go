@@ -142,42 +142,78 @@ func createChatCmd(clientID, myUserID, otherUPN string) tea.Cmd {
 }
 
 // sendMessageCmd sends a message to a chat in the background.
-func sendMessageCmd(clientID, chatID, content string) tea.Cmd {
+func sendMessageCmd(clientID, chatID, content string, images []PastedImage) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
 			return MsgSendDone{Err: err}
 		}
-		err = SendMessage(token, chatID, content)
+		err = SendMessage(token, chatID, content, images)
+		return MsgSendDone{Err: err}
+	}
+}
+
+// sendChannelMessageCmd sends a message to a Teams channel in the background.
+func sendChannelMessageCmd(clientID, teamID, channelID, content string, images []PastedImage) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgSendDone{Err: err}
+		}
+		err = SendChannelMessage(token, teamID, channelID, content, images)
+		return MsgSendDone{Err: err}
+	}
+}
+
+// sendChannelReplyCmd posts a reply into an existing Teams channel thread.
+func sendChannelReplyCmd(clientID, teamID, channelID, rootMsgID, content string, images []PastedImage) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgSendDone{Err: err}
+		}
+		err = SendChannelReply(token, teamID, channelID, rootMsgID, content, images)
 		return MsgSendDone{Err: err}
 	}
 }
 
 // sendMessageWithRefCmd sends a reply message with a Teams messageReference attachment.
-func sendMessageWithRefCmd(clientID, chatID, content string, ref *Message) tea.Cmd {
+func sendMessageWithRefCmd(clientID, chatID, content string, ref *Message, images []PastedImage) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
 			return MsgSendDone{Err: err}
 		}
-		err = SendMessageWithReference(token, chatID, ref, content)
+		err = SendMessageWithReference(token, chatID, ref, content, images)
 		return MsgSendDone{Err: err}
 	}
 }
 
-// setReactionCmd adds a reaction to a message in the background.
+// setReactionCmd adds a reaction to a chat message in the background.
 func setReactionCmd(clientID, chatID, messageID, reactionType string) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
-			return MsgSendDone{Err: err} // reuse MsgSendDone or create new
+			return MsgSendDone{Err: err}
 		}
 		err = SetReaction(token, chatID, messageID, reactionType)
 		return MsgSendDone{Err: err}
 	}
 }
 
-// unsetReactionCmd removes a reaction from a message in the background.
+// setChannelReactionCmd adds a reaction to a Teams channel message in the background.
+func setChannelReactionCmd(clientID, teamID, channelID, messageID, reactionType string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgSendDone{Err: err}
+		}
+		err = SetChannelReaction(token, teamID, channelID, messageID, reactionType)
+		return MsgSendDone{Err: err}
+	}
+}
+
+// unsetReactionCmd removes a reaction from a chat message in the background.
 func unsetReactionCmd(clientID, chatID, messageID, reactionType string) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
@@ -189,7 +225,19 @@ func unsetReactionCmd(clientID, chatID, messageID, reactionType string) tea.Cmd 
 	}
 }
 
-// deleteMessageCmd removes a message in the background.
+// unsetChannelReactionCmd removes a reaction from a Teams channel message in the background.
+func unsetChannelReactionCmd(clientID, teamID, channelID, messageID, reactionType string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgSendDone{Err: err}
+		}
+		err = UnsetChannelReaction(token, teamID, channelID, messageID, reactionType)
+		return MsgSendDone{Err: err}
+	}
+}
+
+// deleteMessageCmd removes a chat message in the background.
 func deleteMessageCmd(clientID, chatID, messageID string) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
@@ -201,7 +249,19 @@ func deleteMessageCmd(clientID, chatID, messageID string) tea.Cmd {
 	}
 }
 
-// updateMessageCmd modifies a message in the background.
+// deleteChannelMessageCmd removes a Teams channel message in the background.
+func deleteChannelMessageCmd(clientID, teamID, channelID, messageID string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgSendDone{Err: err}
+		}
+		err = DeleteChannelMessage(token, teamID, channelID, messageID)
+		return MsgSendDone{Err: err}
+	}
+}
+
+// updateMessageCmd modifies a chat message in the background.
 func updateMessageCmd(clientID, chatID, messageID, content string) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
@@ -210,6 +270,83 @@ func updateMessageCmd(clientID, chatID, messageID, content string) tea.Cmd {
 		}
 		err = UpdateMessage(token, chatID, messageID, content)
 		return MsgEditDone{ChatID: chatID, MessageID: messageID, Content: content, Err: err}
+	}
+}
+
+// updateChannelMessageCmd modifies a Teams channel message in the background.
+func updateChannelMessageCmd(clientID, teamID, channelID, messageID, content string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgEditDone{ChatID: channelID, MessageID: messageID, Content: content, Err: err}
+		}
+		err = UpdateChannelMessage(token, teamID, channelID, messageID, content)
+		return MsgEditDone{ChatID: channelID, MessageID: messageID, Content: content, Err: err}
+	}
+}
+
+// loadPresenceCmd fetches the presence status for a user by their Azure AD user ID.
+// Requires Presence.Read.All scope; returns MsgPresenceLoaded.
+func loadPresenceCmd(clientID, userID, displayName string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgPresenceLoaded{UserID: userID, Err: err}
+		}
+		p, err := GetUserPresence(token, userID)
+		return MsgPresenceLoaded{UserID: userID, Presence: p, Err: err}
+	}
+}
+
+// loadUserProfileCmd fetches the full profile for a user by their Azure AD user ID.
+// Requires User.ReadBasic.All (or User.Read.All for extended info); returns MsgUserProfileLoaded.
+func loadUserProfileCmd(clientID, userID string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgUserProfileLoaded{UserID: userID, Err: err}
+		}
+		p, err := GetUserProfile(token, userID)
+		return MsgUserProfileLoaded{UserID: userID, Profile: p, Err: err}
+	}
+}
+
+// downloadFileCmd downloads a file attachment to destPath.
+// Requires Files.Read scope; returns MsgFileDownloaded.
+func downloadFileCmd(clientID, fileURL, destPath string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgFileDownloaded{Err: err}
+		}
+		err = DownloadFile(token, fileURL, destPath)
+		return MsgFileDownloaded{DestPath: destPath, Err: err}
+	}
+}
+
+// loadTeamsChannelsCmd fetches the list of joined Teams with their channels.
+// Requires Team.ReadBasic.All + Channel.ReadBasic.All scopes; returns MsgTeamsChannelsLoaded.
+func loadTeamsChannelsCmd(clientID string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgTeamsChannelsLoaded{Err: err}
+		}
+		teams, err := GetTeamsWithChannels(token)
+		return MsgTeamsChannelsLoaded{Teams: teams, Err: err}
+	}
+}
+
+// loadChannelMessagesCmd fetches messages for a specific Teams channel.
+// Requires ChannelMessage.Read.All scope; returns MsgChannelMessagesLoaded.
+func loadChannelMessagesCmd(clientID, teamID, channelID string) tea.Cmd {
+	return func() tea.Msg {
+		token, err := GetValidTokenSilent(clientID)
+		if err != nil {
+			return MsgChannelMessagesLoaded{TeamID: teamID, ChannelID: channelID, Err: err}
+		}
+		msgs, next, err := GetChannelMessages(token, teamID, channelID, ResolveMessageLimit())
+		return MsgChannelMessagesLoaded{TeamID: teamID, ChannelID: channelID, Messages: msgs, NextLink: next, Err: err}
 	}
 }
 
@@ -305,6 +442,11 @@ func loadInitialChatOrder(chats []Chat) ([]Chat, map[string]string, map[string]t
 var version = "dev"
 
 func main() {
+	if len(os.Args) >= 3 && os.Args[1] == "preview-image" {
+		previewImage(os.Args[2])
+		os.Exit(0)
+	}
+
 	// Set default HTTP client timeout to prevent background refreshes from hanging indefinitely.
 	http.DefaultClient.Timeout = 15 * time.Second
 
@@ -370,6 +512,16 @@ func main() {
 		if cfg.CustomChatIcons != nil {
 			app.CustomChatIcons = cfg.CustomChatIcons
 		}
+	}
+
+	// Resolve optional feature flags once at startup.
+	app.Features = FeatureFlags{
+		FilePreview:           ResolveFeatureFilePreview(),
+		FilePreviewInTerminal: ResolveFeatureFilePreview() && ResolveFeatureFilePreviewInTerminal(),
+		Presence:              ResolveFeaturePresence(),
+		UserProfile:           ResolveFeatureUserProfile(),
+		ProfileExtended:       ResolveFeatureUserProfileExtended(),
+		TeamsChannels:         ResolveFeatureTeamsChannels(),
 	}
 
 	// Build initial stable chat order.

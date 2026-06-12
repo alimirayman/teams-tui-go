@@ -21,13 +21,16 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 - Auto-refreshes expired tokens using `GetValidTokenSilent(clientID)`
 - Client ID loaded in order: `.env` → `config.json` → built-in default
 - **All background API calls must use `GetValidTokenSilent()`**, never the cached `accessToken` from startup
+- **Dynamic scopes**: `StartDeviceFlow(clientID, scopes string)` and `RefreshAccessToken(clientID, refreshToken, scopes string)` accept an explicit scope string. Both callers pass `BuildScopes()` so that any enabled feature flags are included in the token request. The old `scopes` constant has been removed.
 
 ### Configuration (`config.go`)
 - App data: `~/.config/teams-tui-go/` (via `GetAppDir()`)
 - Cache: `~/.cache/teams-tui-go/` (via `GetCacheDir()`)
-- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`, `NotificationShowPreview *bool`, `NotificationPreviewLen *int`, `MessageLimit *int`, `SearchContextLimit *int`, `ChatLimit *int`, `ChatIconTheme *string`, `CustomChatIcons map[string]string`
+- Config struct: `ClientID *string`, `NotificationMode *NotificationMode`, `NotificationShowPreview *bool`, `NotificationPreviewLen *int`, `MessageLimit *int`, `SearchContextLimit *int`, `ChatLimit *int`, `ChatIconTheme *string`, `CustomChatIcons map[string]string`, plus five optional feature flags: `FilePreviewEnabled`, `PresenceEnabled`, `UserProfileEnabled`, `UserProfileExtended`, `TeamsChannelsEnabled`
 - `ResolveClientID()`, `ResolveMessageLimit()`, `ResolveSearchContextLimit()`, and `ResolveChatLimit()` implement the full precedence chain
-- `InitConfig()` is run at application startup to populate any missing configuration keys in `config.json` with their default values and persist them to disk. It defaults `ChatIconTheme` to `"unicode"`.
+- `InitConfig()` is run at application startup to populate any missing configuration keys in `config.json` with their default values and persist them to disk. It defaults `ChatIconTheme` to `"unicode"` and all feature flags to `false`.
+- `BuildScopes()` assembles the OAuth2 scope string dynamically: always includes the four basic scopes (`User.Read Chat.ReadWrite offline_access`) and appends optional scopes for each enabled feature flag.
+- Five `ResolveFeatureXxx()` helpers (one per feature) read the config and return a bool, used by `BuildScopes()` and during startup to populate `App.Features`.
 
 ### API Layer (`api.go`)
 - **User Detection**: Identifies the current user by counting name frequency across `oneOnOne` chats
@@ -42,6 +45,9 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 - `App` struct holds all runtime state: chats, messages, selection, input mode, notification mode, etc.
 - `NotificationMode` enum is JSON-serialised as a string ("None", "Console", "System", "Both")
 - `CurrentUserName` is used for filtering and message alignment; it is **not displayed in the UI**
+- `FeatureFlags` struct (populated once at startup in `main.go` from `ResolveFeatureXxx()`) exposes booleans for each optional feature. **Always read feature state from `app.Features`** — never call `ResolveFeatureXxx()` inside the Bubble Tea event loop.
+- New optional-feature popup states on `App`: `PresencePopupMode`, `PresenceData`, `PresenceLoading`, `PresenceUserName`; `UserProfilePopupMode`, `UserProfileData`, `UserProfileLoading`; `AttachmentCursorMode`, `AttachmentSelectedIndex`; `TeamsData []TeamWithChannels`, `TeamsDataLoading`, `SelectedChannelTeamID`, `SelectedChannelID`; `HelpPopupMode`.
+- **Teams Channels**: `TeamsData` is `[]TeamWithChannels` (loaded once at startup via `loadTeamsChannelsCmd` fired from `Init()`). The sidebar shows a `── Teams ──` divider below chats; `Model.channelSelectedIndex` (-1 = chat mode, ≥0 = channel index into `allChannels()`) drives navigation. Pressing `j` at the last chat enters channel mode; `k` at index 0 exits back to chats. Selecting a channel fires `loadChannelMessagesCmd` and displays messages in the right panel; `MsgChannelMessagesLoaded` populates `app.Messages`. `SelectedChannelTeamID`/`SelectedChannelID` track the active channel (`""` = chat mode).
 
 ### UI (`ui.go`)
 - Bubble Tea `Model` struct implementing `Init()`, `Update()`, `View()`
@@ -92,11 +98,26 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
   - Groups reaction emojis and maps reactor user IDs to their actual names and surnames by looking them up in the cached chat members list.
   - While active, `j`/`k` (or `down`/`up` arrow keys) navigate directly to younger/older messages in the chat history, instantly updating the popup contents, and automatically fetching older messages when reaching the top.
   - If a message is too long to fit in the popup, the message body becomes a scrollable viewport using `Shift+J`/`Shift+K` (or `Shift+down`/`Shift+up`), keeping the header, reactions, and attachments visible at all times.
+  - **Attachment cursor mode** (Tab key while popup is open): `AttachmentCursorMode` is toggled. `j`/`k` then navigate the attachment list. `Enter` downloads the selected attachment to `~/Downloads/` via `downloadFileCmd` (requires `file_preview_enabled` feature). `Tab` or `ESC` exits cursor mode.
+- **Presence Popup** (requires `presence_enabled`):
+  - Activated by `p` in message selection mode. Triggers `loadPresenceCmd` for the sender's user ID.
+  - `MsgPresenceLoaded` updates `app.PresenceData`; the popup `renderPresencePopup` renders availability and activity with color-coded icons.
+  - Closed with `ESC`/`q`/`p`/`Enter`. Handled by `handlePresencePopupKey` in `ui.go`.
+- **User Profile Popup** (requires `user_profile_enabled`):
+  - Activated by `i` in message selection mode. Triggers `loadUserProfileCmd` for the sender's user ID.
+  - `MsgUserProfileLoaded` updates `app.UserProfileData`; `renderUserProfilePopup` shows name, email, and (if `user_profile_extended`) job title, department, office.
+  - Results are cached in `profileCache` (in-memory, session lifetime) in `api.go` to avoid redundant Graph API calls.
+  - Closed with `ESC`/`q`/`i`/`Enter`. Handled by `handleUserProfilePopupKey` in `ui.go`.
+- **Help Popup**:
+  - Activated by `?` in normal mode. Renders a keyboard reference and live optional-feature status (enabled/disabled per flag).
+  - Handled by `handleHelpPopupKey` / `renderHelpPopup` in `ui.go`. Closed with `ESC`/`q`/`?`/`Enter`.
 
 ### Main / Entry Point (`main.go`)
 - Startup: banner → auth → profile → chats (with expanded last message preview) → sort → init model → run
 - All Bubble Tea commands (async API calls) are defined here
 - Initial chat order computed in `loadInitialChatOrder()` using the pre-fetched `LastMessagePreview` field
+- **Optional-feature commands**: `loadPresenceCmd`, `loadUserProfileCmd`, `downloadFileCmd`, `loadTeamsChannelsCmd` — each calls `GetValidTokenSilent` then the corresponding `api.go` function and returns a typed `MsgXxxLoaded` or `MsgFileDownloaded`.
+- `app.Features` is populated here at startup (after loading config) by calling each `ResolveFeatureXxx()` helper.
 
 ---
 
@@ -110,6 +131,8 @@ Go-based terminal UI application for Microsoft Teams. Authenticates via OAuth2 D
 6. **Message Order**: API returns messages newest-first. The UI iterates in reverse to display newest at the bottom.
 7. **Stable Order**: `stableChatOrder` is the source of truth for display order. It is only mutated by `promoteChat()` and `mergeChats()`.
 8. **Silent Failures**: Background refresh errors return `nil` from `tea.Cmd` functions (Bubble Tea ignores nil messages).
+9. **Feature Gates**: Check `m.app.Features.XxxEnabled` (not `ResolveFeatureXxx()`) inside the Bubble Tea event loop. Features are resolved once at startup into `app.Features` to avoid repeated file I/O per keypress.
+10. **Dynamic Scopes**: Always pass `BuildScopes()` to `StartDeviceFlow` and `RefreshAccessToken`. Never hard-code the scope string.
 
 ---
 

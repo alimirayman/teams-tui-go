@@ -65,6 +65,17 @@ func (n *NotificationMode) UnmarshalJSON(data []byte) error {
 // App — central application state
 // ---------------------------------------------------------------------------
 
+// FeatureFlags holds resolved optional feature flags for the running session.
+// Populated once at startup from config to avoid repeated file reads.
+type FeatureFlags struct {
+	FilePreview           bool // requires Files.Read
+	FilePreviewInTerminal bool // show image in terminal if FilePreview is enabled
+	Presence              bool // requires Presence.Read.All
+	UserProfile           bool // requires User.ReadBasic.All (or User.Read.All if Extended)
+	ProfileExtended       bool // requires User.Read.All (admin consent)
+	TeamsChannels         bool // requires Team.ReadBasic.All + Channel.ReadBasic.All
+}
+
 // App holds all runtime state for the Teams TUI application.
 type App struct {
 	Chats                      []Chat
@@ -123,12 +134,43 @@ type App struct {
 	UserSearchStatus           string
 	UserSearchStatusUntil      *time.Time
 	UserSearchLocalResults     []Chat
+	UserSearchChannelResults   []channelEntry
 	UserSearchDirectoryResults []User
 	UserSearchSelectedIndex    int
 	UserSearchLoading          bool
 	AppStartTime               time.Time
 	ChatIconTheme              string
 	CustomChatIcons            map[string]string
+	Features                   FeatureFlags
+
+	// ── Presence popup (Feature: presence_enabled) ───────────────────────
+	PresencePopupMode bool
+	PresenceData      *UserPresence
+	PresenceUserName  string // display name of the user whose presence is shown
+	PresenceLoading   bool
+
+	// ── User Profile popup (Feature: user_profile_enabled) ───────────────
+	UserProfilePopupMode bool
+	UserProfileData      *UserProfile
+	UserProfileLoading   bool
+
+	// ── Attachment cursor in message view popup (Feature: file_preview_enabled) ──
+	AttachmentSelectedIndex int
+	AttachmentCursorMode    bool // true when navigating attachments inside the v popup
+
+	// ── Teams channels data (Feature: teams_channels_enabled) ───────────
+	TeamsData             []TeamWithChannels // cached joined teams + channels; populated at startup
+	TeamsDataLoading      bool
+	SelectedChannelTeamID string // teamID of the currently viewed channel ("" = chat mode)
+	SelectedChannelID     string // channelID of the currently viewed channel ("" = chat mode)
+	ChannelReplyToID      string // root message ID when replying to a channel thread ("" = new root post)
+
+	// ── Help popup ───────────────────────────────────────────────────────
+	HelpPopupMode bool
+
+	// ── Composed images (pasted from clipboard) ──────────────────────────
+	ComposedImages []PastedImage
+	SkipTextareaUpdate bool
 }
 
 // ChatSearchState holds the search-specific query and viewport navigation state for a chat.

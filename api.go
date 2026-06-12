@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,10 +63,14 @@ type Message struct {
 	Attachments     []MessageAttachment `json:"attachments,omitempty"`
 	Reactions       []MessageReaction   `json:"reactions,omitempty"`
 	PlainTextCached *string             `json:"-"`
+	// IsReply is set in-process (not from JSON) for Teams channel thread replies.
+	IsReply   bool   `json:"-"`
+	ReplyToID string `json:"-"` // ID of the root message this is a reply to
 }
 
 // GetPlainText returns the cached plain text of the message, parsing HTML on demand once.
 func (msg *Message) GetPlainText() string {
+	msg.ProcessInlineImages()
 	if msg.PlainTextCached != nil {
 		return *msg.PlainTextCached
 	}
@@ -84,6 +89,92 @@ func (msg *Message) GetPlainText() string {
 	return text
 }
 
+func hasExtension(s string) bool {
+	ext := filepath.Ext(s)
+	return ext != "" && len(ext) <= 5
+}
+
+func sanitizeFilename(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' || r == '\x00' {
+			return '_'
+		}
+		return r
+	}, s)
+}
+
+func ExtractInlineImages(htmlContent string) []MessageAttachment {
+	if htmlContent == "" {
+		return nil
+	}
+	var list []MessageAttachment
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
+	imgCounter := 0
+	for {
+		tt := tokenizer.Next()
+		if tt == html.ErrorToken {
+			break
+		}
+		if tt == html.StartTagToken || tt == html.SelfClosingTagToken {
+			token := tokenizer.Token()
+			if token.Data == "img" {
+				var src, alt string
+				for _, attr := range token.Attr {
+					if attr.Key == "src" {
+						src = attr.Val
+					} else if attr.Key == "alt" {
+						alt = attr.Val
+					}
+				}
+				if src != "" {
+					imgCounter++
+					name := alt
+					if name == "" {
+						name = fmt.Sprintf("inline-image-%d", imgCounter)
+					} else {
+						name = sanitizeFilename(name)
+					}
+					if !hasExtension(name) {
+						name += ".png"
+					}
+					contentType := "image/png"
+					
+					srcCopy := src
+					nameCopy := name
+					contentTypeCopy := contentType
+					
+					list = append(list, MessageAttachment{
+						ID:          fmt.Sprintf("inline-img-%d", imgCounter),
+						Name:        &nameCopy,
+						ContentType: &contentTypeCopy,
+						ContentURL:  &srcCopy,
+					})
+				}
+			}
+		}
+	}
+	return list
+}
+
+func (msg *Message) ProcessInlineImages() {
+	if msg.Body == nil || msg.Body.Content == nil {
+		return
+	}
+	inlineAtts := ExtractInlineImages(*msg.Body.Content)
+	if len(inlineAtts) > 0 {
+		seen := make(map[string]bool)
+		for _, a := range msg.Attachments {
+			seen[a.ID] = true
+		}
+		for _, a := range inlineAtts {
+			if !seen[a.ID] {
+				msg.Attachments = append(msg.Attachments, a)
+				seen[a.ID] = true
+			}
+		}
+	}
+}
+
 // MessageReaction represents a reaction to a message.
 type MessageReaction struct {
 	ReactionType    string       `json:"reactionType"`
@@ -97,6 +188,7 @@ type MessageAttachment struct {
 	Name        *string `json:"name,omitempty"`
 	ContentType *string `json:"contentType,omitempty"`
 	Content     *string `json:"content,omitempty"`
+	ContentURL  *string `json:"contentUrl,omitempty"`
 }
 
 // MessageFrom holds the sender information.
@@ -450,19 +542,101 @@ func formatMessageBody(content string) map[string]any {
 	}
 }
 
+// formatMessageBodyWithImages prepares the payload body and hosted contents for inline images.
+func formatMessageBodyWithImages(content string, images []PastedImage) (map[string]any, []map[string]any) {
+	if len(images) == 0 {
+		return formatMessageBody(content), nil
+	}
+
+	var htmlContent string
+	if containsMarkdown(content) || strings.Contains(content, "\n") || strings.HasPrefix(content, " ") || strings.HasPrefix(content, "\t") {
+		htmlContent = markdownToHTML(content)
+	} else {
+		htmlContent = "<p>" + html.EscapeString(content) + "</p>"
+	}
+
+	var hostedContents []map[string]any
+	usedImages := make(map[int]bool)
+
+	re := regexp.MustCompile(`\[[Ii]mage\s+(\d+)\]`)
+	replacedContent := re.ReplaceAllStringFunc(htmlContent, func(match string) string {
+		sub := re.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		var idx int
+		_, err := fmt.Sscanf(sub[1], "%d", &idx)
+		if err != nil || idx < 1 || idx > len(images) {
+			return match
+		}
+		usedImages[idx-1] = true
+		return fmt.Sprintf(`<img src="../hostedContents/%d/$value" />`, idx)
+	})
+
+	// Only include images that are actually referenced in the HTML body.
+	for i, img := range images {
+		if usedImages[i] {
+			b64Content := base64.StdEncoding.EncodeToString(img.Bytes)
+			hostedContents = append(hostedContents, map[string]any{
+				"@microsoft.graph.temporaryId": fmt.Sprintf("%d", i+1),
+				"contentBytes":                 b64Content,
+				"contentType":                  img.ContentType,
+			})
+		}
+	}
+
+	bodyPayload := map[string]any{
+		"contentType": "html",
+		"content":     replacedContent,
+	}
+
+	return bodyPayload, hostedContents
+}
+
 // SendMessage posts a message to the given chat.
-func SendMessage(accessToken, chatID, content string) error {
+func SendMessage(accessToken, chatID, content string, images []PastedImage) error {
+	body, hostedContents := formatMessageBodyWithImages(content, images)
 	payload := map[string]any{
-		"body": formatMessageBody(content),
+		"body": body,
+	}
+	if len(hostedContents) > 0 {
+		payload["hostedContents"] = hostedContents
 	}
 	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
 }
 
+// SendChannelMessage posts a new message to a Teams channel.
+// Requires ChannelMessage.Read.All delegated permission.
+func SendChannelMessage(accessToken, teamID, channelID, content string, images []PastedImage) error {
+	body, hostedContents := formatMessageBodyWithImages(content, images)
+	payload := map[string]any{
+		"body": body,
+	}
+	if len(hostedContents) > 0 {
+		payload["hostedContents"] = hostedContents
+	}
+	return graphPost(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages", teamID, channelID), payload)
+}
+
+// SendChannelReply posts a reply into an existing Teams channel thread.
+// rootMsgID is the ID of the root (top-level) message in the thread.
+// Requires ChannelMessage.Send delegated permission.
+func SendChannelReply(accessToken, teamID, channelID, rootMsgID, content string, images []PastedImage) error {
+	body, hostedContents := formatMessageBodyWithImages(content, images)
+	payload := map[string]any{
+		"body": body,
+	}
+	if len(hostedContents) > 0 {
+		payload["hostedContents"] = hostedContents
+	}
+	return graphPost(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages/%s/replies", teamID, channelID, rootMsgID), payload)
+}
+
 // SendMessageWithReference posts a reply-to-message using a Teams messageReference
 // attachment, making it appear as a proper quoted reply in the Teams client.
-func SendMessageWithReference(accessToken, chatID string, ref *Message, content string) error {
+func SendMessageWithReference(accessToken, chatID string, ref *Message, content string, images []PastedImage) error {
 	if ref == nil {
-		return SendMessage(accessToken, chatID, content)
+		return SendMessage(accessToken, chatID, content, images)
 	}
 
 	// Build the sender JSON for the attachment content field.
@@ -505,12 +679,8 @@ func SendMessageWithReference(accessToken, chatID string, ref *Message, content 
 	// The body MUST be HTML and MUST contain <attachment id="..."></attachment> as a
 	// placeholder so Teams knows where to render the quote bubble.
 	marker := fmt.Sprintf(`<attachment id="%s"></attachment>`, ref.ID)
-	var bodyHTML string
-	if containsMarkdown(content) || strings.Contains(content, "\n") {
-		bodyHTML = marker + "\n" + markdownToHTML(content)
-	} else {
-		bodyHTML = marker + "\n<p>" + content + "</p>"
-	}
+	body, hostedContents := formatMessageBodyWithImages(content, images)
+	bodyHTML := marker + "\n" + body["content"].(string)
 
 	payload := map[string]any{
 		"body": map[string]any{
@@ -524,6 +694,9 @@ func SendMessageWithReference(accessToken, chatID string, ref *Message, content 
 				"content":     string(attContentJSON),
 			},
 		},
+	}
+	if len(hostedContents) > 0 {
+		payload["hostedContents"] = hostedContents
 	}
 	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
 }
@@ -553,6 +726,14 @@ func UpdateMessage(accessToken, chatID, messageID, content string) error {
 	return graphPatch(accessToken, "/chats/"+chatID+"/messages/"+messageID, payload)
 }
 
+// UpdateChannelMessage modifies an existing message in a Teams channel.
+func UpdateChannelMessage(accessToken, teamID, channelID, messageID, content string) error {
+	payload := map[string]any{
+		"body": formatMessageBody(content),
+	}
+	return graphPatch(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages/%s", teamID, channelID, messageID), payload)
+}
+
 // ---------------------------------------------------------------------------
 // SetReaction
 // ---------------------------------------------------------------------------
@@ -565,7 +746,15 @@ func SetReaction(accessToken, chatID, messageID, reactionType string) error {
 	return graphPost(accessToken, "/chats/"+chatID+"/messages/"+messageID+"/setReaction", payload)
 }
 
-// UnsetReaction removes a reaction from a message.
+// SetChannelReaction adds or updates a reaction on a Teams channel message.
+func SetChannelReaction(accessToken, teamID, channelID, messageID, reactionType string) error {
+	payload := map[string]any{
+		"reactionType": reactionType,
+	}
+	return graphPost(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages/%s/setReaction", teamID, channelID, messageID), payload)
+}
+
+// UnsetReaction removes a reaction from a chat message.
 func UnsetReaction(accessToken, chatID, messageID, reactionType string) error {
 	payload := map[string]any{
 		"reactionType": reactionType,
@@ -573,16 +762,32 @@ func UnsetReaction(accessToken, chatID, messageID, reactionType string) error {
 	return graphPost(accessToken, "/chats/"+chatID+"/messages/"+messageID+"/unsetReaction", payload)
 }
 
-// DeleteMessage removes a message from a chat.
+// UnsetChannelReaction removes a reaction from a Teams channel message.
+func UnsetChannelReaction(accessToken, teamID, channelID, messageID, reactionType string) error {
+	payload := map[string]any{
+		"reactionType": reactionType,
+	}
+	return graphPost(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages/%s/unsetReaction", teamID, channelID, messageID), payload)
+}
+
+// DeleteMessage removes a message from a chat (soft-delete via PATCH).
 func DeleteMessage(accessToken, chatID, messageID string) error {
-	// The Graph API does not support true DELETE for chat messages.
-	// We perform a "soft delete" by updating the content to a placeholder.
 	payload := map[string]any{
 		"body": map[string]any{
 			"content": "*(deleted)*",
 		},
 	}
 	return graphPatch(accessToken, "/chats/"+chatID+"/messages/"+messageID, payload)
+}
+
+// DeleteChannelMessage removes a message from a Teams channel (soft-delete via PATCH).
+func DeleteChannelMessage(accessToken, teamID, channelID, messageID string) error {
+	payload := map[string]any{
+		"body": map[string]any{
+			"content": "*(deleted)*",
+		},
+	}
+	return graphPatch(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages/%s", teamID, channelID, messageID), payload)
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,6 +1246,7 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 	var sb strings.Builder
 	var lastChar rune
 	var tagAddedNewline bool
+	imgCounter := 0
 
 	// ---- existing state ----
 	var inPre bool
@@ -1145,7 +1351,24 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment) string {
 				tagAddedNewline = false
 
 			case "img":
-				orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("image")
+				imgCounter++
+				var altText string
+				for _, attr := range token.Attr {
+					if attr.Key == "alt" {
+						altText = attr.Val
+						break
+					}
+				}
+				imgName := altText
+				if imgName == "" {
+					imgName = fmt.Sprintf("inline-image-%d.png", imgCounter)
+				} else {
+					imgName = sanitizeFilename(imgName)
+					if !hasExtension(imgName) {
+						imgName += ".png"
+					}
+				}
+				orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render(imgName)
 				content := "🖼️  " + orangeText
 				if inLink {
 					content = fmt.Sprintf("\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", currentLinkURL, content)
@@ -1545,4 +1768,358 @@ func GetOrCreateOneOnOneChat(accessToken, myUserID, otherUPN string) (*Chat, err
 	chat.Members = GetChatMembers(accessToken, chat.ID)
 
 	return &chat, nil
+}
+
+// ---------------------------------------------------------------------------
+// Optional Feature: User Presence (requires Presence.Read.All)
+// ---------------------------------------------------------------------------
+
+// UserPresence holds the availability and activity state of a user.
+type UserPresence struct {
+	Availability string `json:"availability"` // Available, Busy, Away, BeRightBack, DoNotDisturb, Offline, PresenceUnknown
+	Activity     string `json:"activity"`     // InACall, InAMeeting, InAConferenceCall, etc.
+}
+
+// GetUserPresence fetches the presence status for a user by their Azure AD user ID.
+// Returns an error if the token does not include Presence.Read.All.
+func GetUserPresence(accessToken, userID string) (*UserPresence, error) {
+	body, err := graphGet(accessToken, "/users/"+userID+"/presence")
+	if err != nil {
+		return nil, fmt.Errorf("GetUserPresence: %w", err)
+	}
+	var p UserPresence
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("GetUserPresence: parse: %w", err)
+	}
+	return &p, nil
+}
+
+// ---------------------------------------------------------------------------
+// Optional Feature: User Profile (requires User.ReadBasic.All or User.Read.All)
+// ---------------------------------------------------------------------------
+
+// UserProfile holds extended profile information for a user.
+type UserProfile struct {
+	ID                string  `json:"id"`
+	DisplayName       string  `json:"displayName"`
+	Mail              *string `json:"mail,omitempty"`
+	UserPrincipalName *string `json:"userPrincipalName,omitempty"`
+	JobTitle          *string `json:"jobTitle,omitempty"`       // available with User.Read.All
+	Department        *string `json:"department,omitempty"`     // available with User.Read.All
+	OfficeLocation    *string `json:"officeLocation,omitempty"` // available with User.Read.All
+	MobilePhone       *string `json:"mobilePhone,omitempty"`
+}
+
+// profileCache is an in-memory session cache to avoid redundant profile fetches.
+var profileCache = make(map[string]*UserProfile)
+
+// GetUserProfile fetches profile information for a user by their Azure AD user ID.
+// Results are cached in memory for the duration of the session.
+// Returns an error if the token does not include User.ReadBasic.All.
+func GetUserProfile(accessToken, userID string) (*UserProfile, error) {
+	if p, ok := profileCache[userID]; ok {
+		return p, nil
+	}
+	body, err := graphGet(accessToken, "/users/"+userID+"?$select=id,displayName,mail,userPrincipalName,jobTitle,department,officeLocation,mobilePhone")
+	if err != nil {
+		return nil, fmt.Errorf("GetUserProfile: %w", err)
+	}
+	var p UserProfile
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("GetUserProfile: parse: %w", err)
+	}
+	profileCache[userID] = &p
+	return &p, nil
+}
+
+// ---------------------------------------------------------------------------
+// Optional Feature: File Download (requires Files.Read)
+// ---------------------------------------------------------------------------
+
+// isSharePointURL returns true when the URL is a SharePoint/OneDrive file URL
+// that must be resolved via the Shares API rather than fetched directly.
+func isSharePointURL(fileURL string) bool {
+	lower := strings.ToLower(fileURL)
+	return strings.Contains(lower, "sharepoint.com") ||
+		strings.Contains(lower, "1drv.ms") ||
+		strings.Contains(lower, "onedrive.live.com")
+}
+
+// resolveSharePointDownloadURL takes a SharePoint/OneDrive contentUrl and
+// returns a direct download URL by going through the Graph Shares API.
+// Requires Files.Read (or Files.Read.All) permission.
+func resolveSharePointDownloadURL(accessToken, shareURL string) (string, error) {
+	// Encode the sharing URL as a base64 token required by the Shares API.
+	// Format: "u!" + base64(url), then replace +→-, /→_, remove trailing =
+	encoded := base64.StdEncoding.EncodeToString([]byte(shareURL))
+	encoded = strings.TrimRight(encoded, "=")
+	encoded = strings.ReplaceAll(encoded, "+", "-")
+	encoded = strings.ReplaceAll(encoded, "/", "_")
+	sharesPath := "/shares/u!" + encoded + "/driveItem"
+
+	body, err := graphGet(accessToken, sharesPath)
+	if err != nil {
+		return "", fmt.Errorf("resolveSharePointDownloadURL: %w", err)
+	}
+
+	var item struct {
+		ID              string `json:"id"`
+		ParentReference struct {
+			DriveID string `json:"driveId"`
+		} `json:"parentReference"`
+		DownloadURL string `json:"@microsoft.graph.downloadUrl"`
+	}
+	if err := json.Unmarshal(body, &item); err != nil {
+		return "", fmt.Errorf("resolveSharePointDownloadURL: parse: %w", err)
+	}
+
+	// Prefer the pre-authenticated download URL if present.
+	if item.DownloadURL != "" {
+		return item.DownloadURL, nil
+	}
+
+	// Fall back to constructing the drive content URL.
+	if item.ID != "" && item.ParentReference.DriveID != "" {
+		return "/drives/" + item.ParentReference.DriveID + "/items/" + item.ID + "/content", nil
+	}
+
+	return "", fmt.Errorf("resolveSharePointDownloadURL: no download URL in response")
+}
+
+// DownloadFile downloads the content at the given URL (contentUrl from a message attachment)
+// and writes it to destPath. Uses the Bearer token for authentication.
+// For SharePoint reference attachments, automatically resolves via the Shares API.
+func DownloadFile(accessToken, fileURL, destPath string) error {
+	actualURL := fileURL
+
+	if isSharePointURL(fileURL) {
+		// SharePoint URLs must be resolved to a direct download URL first.
+		resolved, err := resolveSharePointDownloadURL(accessToken, fileURL)
+		if err != nil {
+			return fmt.Errorf("DownloadFile: resolve SharePoint URL: %w", err)
+		}
+		// If resolved is a Graph API path (starts with /), prepend the base URL.
+		if strings.HasPrefix(resolved, "/") {
+			actualURL = graphAPIBase + resolved
+		} else {
+			actualURL = resolved
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodGet, actualURL, nil)
+	if err != nil {
+		return fmt.Errorf("DownloadFile: build request: %w", err)
+	}
+	// Only set the Bearer token for Graph API URLs; pre-authenticated
+	// @microsoft.graph.downloadUrl URLs already contain credentials.
+	if strings.Contains(actualURL, "graph.microsoft.com") {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("DownloadFile: request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("DownloadFile: HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("DownloadFile: read body: %w", err)
+	}
+	return os.WriteFile(destPath, data, 0o600)
+}
+
+// ---------------------------------------------------------------------------
+// Optional Feature: Teams Channels (requires Team.ReadBasic.All + Channel.ReadBasic.All)
+// ---------------------------------------------------------------------------
+
+// Team represents a Microsoft Teams team.
+type Team struct {
+	ID          string  `json:"id"`
+	DisplayName string  `json:"displayName"`
+	Description *string `json:"description,omitempty"`
+}
+
+// Channel represents a channel within a Team.
+type Channel struct {
+	ID          string  `json:"id"`
+	DisplayName string  `json:"displayName"`
+	Description *string `json:"description,omitempty"`
+}
+
+// TeamWithChannels holds a team and its list of channels.
+type TeamWithChannels struct {
+	Team     Team
+	Channels []Channel
+}
+
+type teamsResponse struct {
+	Value    []Team  `json:"value"`
+	NextLink *string `json:"@odata.nextLink,omitempty"`
+}
+
+type channelsResponse struct {
+	Value []Channel `json:"value"`
+}
+
+// GetJoinedTeams returns all Teams the current user is a member of.
+// Requires Team.ReadBasic.All delegated permission.
+func GetJoinedTeams(accessToken string) ([]Team, error) {
+	body, err := graphGet(accessToken, "/me/joinedTeams?$select=id,displayName,description")
+	if err != nil {
+		return nil, fmt.Errorf("GetJoinedTeams: %w", err)
+	}
+	var r teamsResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, fmt.Errorf("GetJoinedTeams: parse: %w", err)
+	}
+	return r.Value, nil
+}
+
+// GetTeamChannels returns all channels in a given team.
+// Requires Channel.ReadBasic.All delegated permission.
+func GetTeamChannels(accessToken, teamID string) ([]Channel, error) {
+	body, err := graphGet(accessToken, "/teams/"+teamID+"/channels?$select=id,displayName,description")
+	if err != nil {
+		return nil, fmt.Errorf("GetTeamChannels: %w", err)
+	}
+	var r channelsResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, fmt.Errorf("GetTeamChannels: parse: %w", err)
+	}
+	return r.Value, nil
+}
+
+// GetTeamsWithChannels fetches all joined teams and their channels in parallel.
+// Requires Team.ReadBasic.All + Channel.ReadBasic.All delegated permissions.
+func GetTeamsWithChannels(accessToken string) ([]TeamWithChannels, error) {
+	teams, err := GetJoinedTeams(accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	type result struct {
+		idx      int
+		channels []Channel
+		err      error
+	}
+	ch := make(chan result, len(teams))
+	for i, t := range teams {
+		go func(idx int, teamID string) {
+			chans, err := GetTeamChannels(accessToken, teamID)
+			ch <- result{idx: idx, channels: chans, err: err}
+		}(i, t.ID)
+	}
+
+	teamsWithChannels := make([]TeamWithChannels, len(teams))
+	for i, t := range teams {
+		teamsWithChannels[i].Team = t
+	}
+	for range teams {
+		r := <-ch
+		if r.err == nil {
+			teamsWithChannels[r.idx].Channels = r.channels
+		}
+	}
+	return teamsWithChannels, nil
+}
+
+// GetChannelMessages fetches the most recent messages from a Teams channel,
+// filters out system events, and fetches replies for each thread in parallel.
+// Requires ChannelMessage.Read.All delegated permission.
+func GetChannelMessages(accessToken, teamID, channelID string, top int) ([]Message, string, error) {
+	pageSize := top
+	if pageSize > 50 || pageSize <= 0 {
+		pageSize = 50
+	}
+	path := fmt.Sprintf("/teams/%s/channels/%s/messages?$top=%d", teamID, channelID, pageSize)
+	body, err := graphGet(accessToken, path)
+	if err != nil {
+		return nil, "", fmt.Errorf("GetChannelMessages: %w", err)
+	}
+	var r messagesResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, "", fmt.Errorf("GetChannelMessages: parse: %w", err)
+	}
+	next := ""
+	if r.NextLink != nil {
+		next = *r.NextLink
+	}
+
+	// Filter out system events — only keep real "message" entries.
+	var rootMsgs []Message
+	for _, m := range r.Value {
+		if m.MessageType == "" || m.MessageType == "message" {
+			rootMsgs = append(rootMsgs, m)
+		}
+	}
+
+	// Fetch replies for each root message in parallel.
+	type replyResult struct {
+		msgs []Message
+	}
+	replyCh := make(chan replyResult, len(rootMsgs))
+	for _, rm := range rootMsgs {
+		go func(msgID string) {
+			replyPath := fmt.Sprintf("/teams/%s/channels/%s/messages/%s/replies?$top=50", teamID, channelID, msgID)
+			rb, err := graphGet(accessToken, replyPath)
+			if err != nil {
+				replyCh <- replyResult{}
+				return
+			}
+			var rr messagesResponse
+			if err := json.Unmarshal(rb, &rr); err != nil {
+				replyCh <- replyResult{}
+				return
+			}
+			// Filter system events from replies and mark them as replies.
+			var filtered []Message
+			for _, m := range rr.Value {
+				if m.MessageType == "" || m.MessageType == "message" {
+					m.IsReply = true
+					m.ReplyToID = msgID
+					filtered = append(filtered, m)
+				}
+			}
+			replyCh <- replyResult{msgs: filtered}
+		}(rm.ID)
+	}
+
+	// Collect replies keyed by root message ID.
+	replyMap := make(map[string][]Message, len(rootMsgs))
+	for range rootMsgs {
+		res := <-replyCh
+		for _, r := range res.msgs {
+			replyMap[r.ReplyToID] = append(replyMap[r.ReplyToID], r)
+		}
+	}
+
+	// Sort root messages oldest-first.
+	sort.Slice(rootMsgs, func(i, j int) bool {
+		return rootMsgs[i].CreatedDateTime < rootMsgs[j].CreatedDateTime
+	})
+
+	// Build thread-grouped list: each root followed by its replies in chronological order.
+	// The final slice is oldest-first; the UI iterates in reverse to render newest at bottom.
+	var allMsgs []Message
+	for _, root := range rootMsgs {
+		allMsgs = append(allMsgs, root)
+		replies := replyMap[root.ID]
+		sort.Slice(replies, func(i, j int) bool {
+			return replies[i].CreatedDateTime < replies[j].CreatedDateTime
+		})
+		allMsgs = append(allMsgs, replies...)
+	}
+
+	// Reverse so the slice is newest-first (matching the chat message convention;
+	// the UI iterates from len-1 downward to render oldest at top, newest at bottom).
+	for i, j := 0, len(allMsgs)-1; i < j; i, j = i+1, j-1 {
+		allMsgs[i], allMsgs[j] = allMsgs[j], allMsgs[i]
+	}
+
+	return allMsgs, next, nil
 }

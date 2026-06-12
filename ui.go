@@ -2,6 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -106,6 +110,47 @@ type MsgPollReactionsLoaded struct {
 	Results map[string][]Message
 }
 
+
+// MsgPresenceLoaded is sent when a user's presence status has been fetched.
+type MsgPresenceLoaded struct {
+	UserID   string
+	Presence *UserPresence
+	Err      error
+}
+
+// MsgUserProfileLoaded is sent when a user's profile has been fetched.
+type MsgUserProfileLoaded struct {
+	UserID  string
+	Profile *UserProfile
+	Err     error
+}
+
+// MsgFileDownloaded is sent when a file download has completed.
+type MsgFileDownloaded struct {
+	DestPath string
+	Err      error
+}
+
+// MsgPreviewFinished is sent when a terminal image preview has finished.
+type MsgPreviewFinished struct {
+	Err error
+}
+
+// MsgTeamsChannelsLoaded is sent when the joined teams and their channels have been fetched.
+type MsgTeamsChannelsLoaded struct {
+	Teams []TeamWithChannels
+	Err   error
+}
+
+// MsgChannelMessagesLoaded is sent when messages for a Teams channel have been fetched.
+type MsgChannelMessagesLoaded struct {
+	TeamID    string
+	ChannelID string
+	Messages  []Message
+	NextLink  string
+	Err       error
+}
+
 // ---------------------------------------------------------------------------
 // Model — the Bubble Tea application model
 // ---------------------------------------------------------------------------
@@ -177,6 +222,12 @@ type Model struct {
 	// favourites holds chat IDs that have been starred by the user.
 	// Loaded from and persisted to favourites.json in the app config dir.
 	favourites map[string]bool
+
+	// Channel sidebar navigation (used when teams_channels_enabled).
+	// channelSelectedIndex is an index into the flat list returned by allChannels().
+	// -1 means focus is in the chat list (default).
+	channelSelectedIndex int
+	channelScrollOffset  int
 }
 
 // NewModel creates the initial Bubble Tea model.
@@ -212,6 +263,7 @@ func NewModel(app *App, clientID, userID string) Model {
 		pendingEdits:         make(map[string]string),
 		favourites:           make(map[string]bool),
 		focused:              true,
+		channelSelectedIndex: -1,
 	}
 }
 
@@ -224,13 +276,18 @@ func NewModel(app *App, clientID, userID string) Model {
 // we do not fire a redundant loadChatsCmd here. The periodic tick handles all
 // subsequent refreshes.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		tickCmd(),
 		func() tea.Msg {
 			fmt.Print("\x1b[?1004h") // Enable focus reporting
 			return nil
 		},
-	)
+	}
+	if m.app.Features.TeamsChannels {
+		m.app.TeamsDataLoading = true
+		cmds = append(cmds, loadTeamsChannelsCmd(m.clientID))
+	}
+	return tea.Batch(cmds...)
 }
 
 // ---------------------------------------------------------------------------
@@ -274,8 +331,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, loadChatsCmd(m.clientID, m.app.Chats, m.app.CurrentUserName))
 		}
 
-		// Periodic message refresh every ~3 s.
-		if m.app.GetSelectedChat() != nil &&
+		// Periodic message refresh every ~3 s — skip when viewing a channel.
+		if m.channelSelectedIndex < 0 &&
+			m.app.GetSelectedChat() != nil &&
 			time.Since(m.lastMessageRefresh) >= 3*time.Second {
 			m.lastMessageRefresh = time.Now()
 			chat := m.app.GetSelectedChat()
@@ -582,8 +640,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.app.CachedNextLink[loadedChatID] = msg.NextLink
 			}
 		}
-		// Discard UI update if the selected chat changed since we issued the load.
-		if msg.ChatIndex != m.app.SelectedIndex {
+		// Discard UI update if the selected chat changed since we issued the load,
+		// or if we're now viewing a Teams channel instead.
+		if msg.ChatIndex != m.app.SelectedIndex || m.channelSelectedIndex >= 0 {
 			break
 		}
 		m.app.SetLoadingMessages(false)
@@ -863,7 +922,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.app.SetStatus("Send error: "+msg.Err.Error(), 5*time.Second)
 		} else {
 			// Immediately reload messages after send.
-			if chat := m.app.GetSelectedChat(); chat != nil {
+			if m.channelSelectedIndex >= 0 {
+				// In channel mode — reload the channel messages.
+				chans := m.allChannels()
+				if m.channelSelectedIndex < len(chans) {
+					entry := chans[m.channelSelectedIndex]
+					m.lastMessageRefresh = time.Now()
+					cmds = append(cmds, loadChannelMessagesCmd(m.clientID, entry.teamID, entry.channelID))
+				}
+			} else if chat := m.app.GetSelectedChat(); chat != nil {
 				m.lastMessageRefresh = time.Now()
 				cmds = append(cmds, loadMessagesCmd(m.clientID, chat.ID, m.app.SelectedIndex))
 			}
@@ -888,6 +955,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyPendingEdits(msg.ChatID)
 		}
 
+	// ── Presence loaded ───────────────────────────────────────
+	case MsgPresenceLoaded:
+		m.app.PresenceLoading = false
+		if msg.Err == nil {
+			m.app.PresenceData = msg.Presence
+		} else {
+			m.app.PresencePopupMode = false
+			m.app.SetStatus("Presence unavailable: "+msg.Err.Error(), 4*time.Second)
+		}
+
+	// ── User profile loaded ────────────────────────────────────
+	case MsgUserProfileLoaded:
+		m.app.UserProfileLoading = false
+		if msg.Err == nil {
+			m.app.UserProfileData = msg.Profile
+		} else {
+			m.app.UserProfilePopupMode = false
+			m.app.SetStatus("Profile unavailable: "+msg.Err.Error(), 4*time.Second)
+		}
+
+	// ── File downloaded ─────────────────────────────────────────
+	case MsgFileDownloaded:
+		if msg.Err == nil {
+			m.app.SetStatus("Saved to: "+msg.DestPath, 6*time.Second)
+			_ = openFile(msg.DestPath)
+		} else {
+			m.app.SetStatus("Download failed: "+msg.Err.Error(), 5*time.Second)
+		}
+
+	case MsgPreviewDownloaded:
+		if msg.Err != nil {
+			m.app.SetStatus("Preview error: "+msg.Err.Error(), 3*time.Second)
+		}
+
+	// ── Teams channels loaded ───────────────────────────────────
+	case MsgTeamsChannelsLoaded:
+		m.app.TeamsDataLoading = false
+		if msg.Err == nil {
+			m.app.TeamsData = msg.Teams
+		} else {
+			m.app.SetStatus("Teams unavailable: "+msg.Err.Error(), 4*time.Second)
+		}
+
+	// ── Channel messages loaded ──────────────────────────────────
+	case MsgChannelMessagesLoaded:
+		if msg.Err != nil {
+			m.app.SetStatus("Channel messages unavailable: "+msg.Err.Error(), 5*time.Second)
+			m.app.SelectedChannelTeamID = ""
+			m.app.SelectedChannelID = ""
+		} else if msg.TeamID == m.app.SelectedChannelTeamID && msg.ChannelID == m.app.SelectedChannelID {
+			m.app.Messages = msg.Messages
+			m.app.NextLink = msg.NextLink
+			m.app.SetLoadingMessages(false)
+		}
+
 	// ── Keyboard input ────────────────────────────────────────────────────
 	case tea.KeyMsg:
 		m = m.markRead()
@@ -900,30 +1022,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Update textarea if in input mode.
 	if m.app.InputMode && wasInputMode {
-		var cmd tea.Cmd
-		oldVal := m.textarea.Value()
-		m.textarea, cmd = m.textarea.Update(msg)
-		cmds = append(cmds, cmd)
+		if m.app.SkipTextareaUpdate {
+			m.app.SkipTextareaUpdate = false
+		} else {
+			var cmd tea.Cmd
+			oldVal := m.textarea.Value()
+			m.textarea, cmd = m.textarea.Update(msg)
+			cmds = append(cmds, cmd)
 
-		newVal := m.textarea.Value()
-		if oldVal != newVal {
-			replaced := replaceEmoticons(newVal)
-			if replaced != newVal {
-				// In bubbles/textarea v1.0.0, we can get the current column offset.
-				// SetValue resets the cursor to the start, so we attempt to restore it.
-				// For multi-line messages, we fallback to moving the cursor to the end
-				// to avoid jumping to the wrong line.
-				col := m.textarea.LineInfo().ColumnOffset
-				diff := len([]rune(newVal)) - len([]rune(replaced))
-				m.textarea.SetValue(replaced)
-				if m.textarea.LineCount() <= 1 {
-					m.textarea.SetCursor(col - diff)
-				} else {
-					m.textarea.CursorEnd()
+			newVal := m.textarea.Value()
+			if oldVal != newVal {
+				replaced := replaceEmoticons(newVal)
+				if replaced != newVal {
+					// In bubbles/textarea v1.0.0, we can get the current column offset.
+					// SetValue resets the cursor to the start, so we attempt to restore it.
+					// For multi-line messages, we fallback to moving the cursor to the end
+					// to avoid jumping to the wrong line.
+					col := m.textarea.LineInfo().ColumnOffset
+					diff := len([]rune(newVal)) - len([]rune(replaced))
+					m.textarea.SetValue(replaced)
+					if m.textarea.LineCount() <= 1 {
+						m.textarea.SetCursor(col - diff)
+					} else {
+						m.textarea.CursorEnd()
+					}
 				}
 			}
+			m.app.InputBuffer = m.textarea.Value()
 		}
-		m.app.InputBuffer = m.textarea.Value()
 	}
 
 	// Update search input if in search mode.
@@ -953,6 +1079,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes keyboard input and returns the updated model + command.
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if m.app.HelpPopupMode {
+		return m.handleHelpPopupKey(msg)
+	}
+	if m.app.PresencePopupMode {
+		return m.handlePresencePopupKey(msg)
+	}
+	if m.app.UserProfilePopupMode {
+		return m.handleUserProfilePopupKey(msg)
+	}
 	if m.app.MessagePopupMode {
 		return m.handleMessagePopupKey(msg)
 	}
@@ -995,10 +1130,55 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "j", "down":
-		m.app.NextChat()
+		if m.channelSelectedIndex >= 0 {
+			// Channel section: wrap around at the bottom.
+			chans := m.allChannels()
+			if m.channelSelectedIndex < len(chans)-1 {
+				m.channelSelectedIndex++
+			} else {
+				m.channelSelectedIndex = 0 // wrap to top of channels
+			}
+		} else {
+			// Chat section: wrap around at the bottom.
+			if m.app.SelectedIndex < len(m.app.Chats)-1 {
+				m.app.NextChat()
+			} else {
+				m.app.SelectedIndex = 0 // wrap to top of chats
+			}
+		}
 
 	case "k", "up":
-		m.app.PreviousChat()
+		if m.channelSelectedIndex >= 0 {
+			// Channel section: wrap around at the top.
+			if m.channelSelectedIndex > 0 {
+				m.channelSelectedIndex--
+			} else {
+				chans := m.allChannels()
+				m.channelSelectedIndex = len(chans) - 1 // wrap to bottom of channels
+			}
+		} else {
+			// Chat section: wrap around at the top.
+			if m.app.SelectedIndex > 0 {
+				m.app.PreviousChat()
+			} else {
+				m.app.SelectedIndex = len(m.app.Chats) - 1 // wrap to bottom of chats
+			}
+		}
+
+	case "tab":
+		// Switch between chat section and channel section.
+		if !m.app.Features.TeamsChannels || len(m.allChannels()) == 0 {
+			break
+		}
+		if m.channelSelectedIndex >= 0 {
+			// Currently in channels → switch to chats.
+			m.channelSelectedIndex = -1
+		} else {
+			// Currently in chats → switch to channels (go to first if never visited).
+			if m.channelSelectedIndex < 0 {
+				m.channelSelectedIndex = 0
+			}
+		}
 
 	case "n":
 		m.app.ToggleNotificationMode()
@@ -1103,7 +1283,10 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 
 	case "f":
-		// Toggle favourite on the selected chat.
+		// Toggle favourite on the selected chat — no-op in channel mode.
+		if m.channelSelectedIndex >= 0 {
+			break
+		}
 		if chat := m.app.GetSelectedChat(); chat != nil {
 			if m.favourites[chat.ID] {
 				delete(m.favourites, chat.ID)
@@ -1125,8 +1308,29 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	}
 
+	// If channel is selected, load its messages on any navigation change.
+	if m.channelSelectedIndex >= 0 {
+		chans := m.allChannels()
+		if m.channelSelectedIndex < len(chans) {
+			entry := chans[m.channelSelectedIndex]
+			if entry.teamID != m.app.SelectedChannelTeamID || entry.channelID != m.app.SelectedChannelID {
+				m.app.SelectedChannelTeamID = entry.teamID
+				m.app.SelectedChannelID = entry.channelID
+				m.app.Messages = nil
+				m.app.NextLink = ""
+				m.app.SetLoadingMessages(true)
+				m.app.SnapToBottom = true
+				return m, loadChannelMessagesCmd(m.clientID, entry.teamID, entry.channelID)
+			}
+		}
+		return m, nil
+	}
+
 	// If chat selection changed, reload messages.
 	if m.app.SelectedIndex != prevIdx {
+		// Left channel mode when switching to a chat.
+		m.app.SelectedChannelTeamID = ""
+		m.app.SelectedChannelID = ""
 		m.app.SearchMode = false
 		m.app.SearchActive = false
 		m.app.SearchQuery = ""
@@ -1159,8 +1363,25 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.app.InputBuffer = ""
 		m.app.EditingMessageID = nil
 		m.app.ReplyToMessage = nil
+		m.app.ChannelReplyToID = ""
+		m.app.ComposedImages = nil
 		m.textarea.Reset()
 		return m, nil
+
+	case "ctrl+v", "ctrl+shift+v", "ctrl+V":
+		imgBytes, contentType, err := GetClipboardImage()
+		if err == nil && len(imgBytes) > 0 {
+			m.app.ComposedImages = append(m.app.ComposedImages, PastedImage{
+				Bytes:       imgBytes,
+				ContentType: contentType,
+			})
+			placeholder := fmt.Sprintf("[Image %d]", len(m.app.ComposedImages))
+			m.textarea.InsertString(placeholder)
+			m.app.InputBuffer = m.textarea.Value()
+			m.app.SetStatus("Image pasted from clipboard", 3*time.Second)
+			m.app.SkipTextareaUpdate = true
+			return m, nil
+		}
 
 	case "enter":
 		content := strings.Trim(m.textarea.Value(), "\n\r")
@@ -1170,6 +1391,25 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.app.InputMode = false
 		m.app.InputBuffer = ""
 		m.textarea.Reset()
+
+		images := m.app.ComposedImages
+		m.app.ComposedImages = nil
+
+		// If we're viewing a Teams channel, send to that channel.
+		if ch := m.activeChannelEntry(); ch != nil {
+			if m.app.EditingMessageID != nil {
+				msgID := *m.app.EditingMessageID
+				m.app.EditingMessageID = nil
+				return m, updateChannelMessageCmd(m.clientID, ch.teamID, ch.channelID, msgID, content)
+			}
+			if m.app.ChannelReplyToID != "" {
+				rootID := m.app.ChannelReplyToID
+				m.app.ChannelReplyToID = ""
+				return m, sendChannelReplyCmd(m.clientID, ch.teamID, ch.channelID, rootID, content, images)
+			}
+			return m, sendChannelMessageCmd(m.clientID, ch.teamID, ch.channelID, content, images)
+		}
+
 		chat := m.app.GetSelectedChat()
 		if chat == nil {
 			return m, nil
@@ -1182,9 +1422,9 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if m.app.ReplyToMessage != nil {
 			ref := m.app.ReplyToMessage
 			m.app.ReplyToMessage = nil
-			return m, sendMessageWithRefCmd(m.clientID, chat.ID, content, ref)
+			return m, sendMessageWithRefCmd(m.clientID, chat.ID, content, ref, images)
 		}
-		return m, sendMessageCmd(m.clientID, chat.ID, content)
+		return m, sendMessageCmd(m.clientID, chat.ID, content, images)
 
 	case "alt+enter", "shift+enter", "ctrl+enter":
 		m.textarea.InsertString("\n")
@@ -1240,25 +1480,99 @@ func (m Model) handleSearchModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 func (m Model) handleMessagePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q", "v", "enter":
+	case "esc", "q", "v":
+		var cmd tea.Cmd
+		if m.app.AttachmentCursorMode {
+			m.app.AttachmentCursorMode = false
+			cmd = clearKittyImagesCmd()
+		} else {
+			m.app.MessagePopupMode = false
+			m.app.AttachmentCursorMode = false
+			cmd = clearKittyImagesCmd()
+		}
+		return m, cmd
+
+	case "enter":
+		if m.app.AttachmentCursorMode {
+			// Download/open selected attachment as xdg-open.
+			if m.app.MessageSelectedIndex < len(m.app.Messages) {
+				msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+				if m.app.AttachmentSelectedIndex < len(msgObj.Attachments) {
+					att := msgObj.Attachments[m.app.AttachmentSelectedIndex]
+					if !m.app.Features.FilePreview {
+						m.app.SetStatus("File preview disabled — enable 'file_preview_enabled' in config.json", 5*time.Second)
+					} else if att.ContentURL != nil && *att.ContentURL != "" {
+						name := "attachment"
+						if att.Name != nil && *att.Name != "" {
+							name = *att.Name
+						}
+						destPath := filepath.Join(getDownloadsDir(), name)
+						m.app.SetStatus("Downloading: "+name+" ...", 0)
+						return m, downloadFileCmd(m.clientID, *att.ContentURL, destPath)
+					} else {
+						m.app.SetStatus("No download URL for this attachment", 3*time.Second)
+					}
+				}
+			}
+			return m, nil
+		}
 		m.app.MessagePopupMode = false
-		return m, nil
+		m.app.AttachmentCursorMode = false
+		return m, clearKittyImagesCmd()
+
+	case "tab":
+		var cmd tea.Cmd
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			if len(msgObj.Attachments) > 0 {
+				m.app.AttachmentCursorMode = !m.app.AttachmentCursorMode
+				m.app.AttachmentSelectedIndex = 0
+				if m.app.AttachmentCursorMode {
+					cmd = m.checkAndTriggerPreviewDownload()
+				} else {
+					cmd = clearKittyImagesCmd()
+				}
+			}
+		}
+		return m, cmd
 
 	case "j", "down":
-		if m.app.MessageSelectedIndex > 0 {
+		if m.app.AttachmentCursorMode {
+			if m.app.MessageSelectedIndex < len(m.app.Messages) {
+				attCount := len(m.app.Messages[m.app.MessageSelectedIndex].Attachments)
+				if m.app.AttachmentSelectedIndex < attCount-1 {
+					m.app.AttachmentSelectedIndex++
+					return m, m.checkAndTriggerPreviewDownload()
+				}
+			}
+			return m, nil
+		} else if m.app.MessageSelectedIndex > 0 {
 			m.app.MessageSelectedIndex--
 			m.app.MessagePopupScrollOffset = 0
+			m.app.AttachmentSelectedIndex = 0
+			return m, clearKittyImagesCmd()
 		}
 
 	case "k", "up":
-		if m.app.MessageSelectedIndex < len(m.app.Messages)-1 {
+		if m.app.AttachmentCursorMode {
+			if m.app.AttachmentSelectedIndex > 0 {
+				m.app.AttachmentSelectedIndex--
+				return m, m.checkAndTriggerPreviewDownload()
+			}
+			return m, nil
+		} else if m.app.MessageSelectedIndex < len(m.app.Messages)-1 {
 			m.app.MessageSelectedIndex++
 			m.app.MessagePopupScrollOffset = 0
+			m.app.AttachmentSelectedIndex = 0
+			return m, clearKittyImagesCmd()
 		} else if m.app.NextLink != "" && !m.app.LoadingMessages {
 			// Already at the oldest loaded message — fetch the next page.
 			m.app.SetLoadingMessages(true)
 			m.app.MessagePopupScrollOffset = 0
-			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.app.SelectedIndex, false)
+			return m, tea.Batch(
+				loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.app.SelectedIndex, false),
+				clearKittyImagesCmd(),
+			)
 		}
 
 	case "J", "shift+down", "pgdown":
@@ -1345,12 +1659,22 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "a":
 		if m.app.MessageSelectedIndex < len(m.app.Messages) {
 			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
-			// Store the referenced message — the actual Teams attachment is built on send.
-			ref := msgObj
-			m.app.ReplyToMessage = &ref
 			m.app.MessageSelectionMode = false
 			m.app.InputMode = true
 			m.textarea.Reset()
+			if m.activeChannelEntry() != nil {
+				// Channel thread reply: resolve the root message ID.
+				// If the selected message is itself a reply, reply to the same root.
+				rootID := msgObj.ID
+				if msgObj.IsReply && msgObj.ReplyToID != "" {
+					rootID = msgObj.ReplyToID
+				}
+				m.app.ChannelReplyToID = rootID
+			} else {
+				// Chat: use the full message reference for quoted-reply formatting.
+				ref := msgObj
+				m.app.ReplyToMessage = &ref
+			}
 			return m, m.textarea.Focus()
 		}
 		return m, nil
@@ -1376,8 +1700,52 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	case "v":
 		if len(m.app.Messages) > 0 && m.app.MessageSelectedIndex < len(m.app.Messages) {
+			m.app.Messages[m.app.MessageSelectedIndex].ProcessInlineImages()
 			m.app.MessagePopupMode = true
 			m.app.MessagePopupScrollOffset = 0
+			m.app.AttachmentCursorMode = false
+			m.app.AttachmentSelectedIndex = 0
+		}
+		return m, nil
+
+	case "p":
+		// Show presence popup (requires presence_enabled feature).
+		if !m.app.Features.Presence {
+			m.app.SetStatus("Presence feature disabled — enable 'presence_enabled' in config.json", 5*time.Second)
+			return m, nil
+		}
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			if msgObj.From != nil && msgObj.From.User != nil && msgObj.From.User.ID != nil {
+				userID := *msgObj.From.User.ID
+				displayName := ""
+				if msgObj.From.User.DisplayName != nil {
+					displayName = *msgObj.From.User.DisplayName
+				}
+				m.app.PresencePopupMode = true
+				m.app.PresenceData = nil
+				m.app.PresenceLoading = true
+				m.app.PresenceUserName = displayName
+				return m, loadPresenceCmd(m.clientID, userID, displayName)
+			}
+		}
+		return m, nil
+
+	case "i":
+		// Show user profile popup (requires user_profile_enabled feature).
+		if !m.app.Features.UserProfile {
+			m.app.SetStatus("User profile feature disabled — enable 'user_profile_enabled' in config.json", 5*time.Second)
+			return m, nil
+		}
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			if msgObj.From != nil && msgObj.From.User != nil && msgObj.From.User.ID != nil {
+				userID := *msgObj.From.User.ID
+				m.app.UserProfilePopupMode = true
+				m.app.UserProfileData = nil
+				m.app.UserProfileLoading = true
+				return m, loadUserProfileCmd(m.clientID, userID)
+			}
 		}
 		return m, nil
 	}
@@ -1396,8 +1764,7 @@ func (m Model) handleReactionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		idx := int(msg.String()[0] - '1')
 		if idx >= 0 && idx < len(types) {
 			reactionType := types[idx]
-			chat := m.app.GetSelectedChat()
-			if chat != nil && m.app.MessageSelectedIndex < len(m.app.Messages) {
+			if m.app.MessageSelectedIndex < len(m.app.Messages) {
 				msgObj := m.app.Messages[m.app.MessageSelectedIndex]
 
 				// Check if current user already has this reaction.
@@ -1426,10 +1793,19 @@ func (m Model) handleReactionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 				m.app.ReactionMode = false
 				m.app.MessageSelectionMode = false
-				if hasReaction {
-					return m, unsetReactionCmd(m.clientID, chat.ID, msgObj.ID, reactionType)
+				if ch := m.activeChannelEntry(); ch != nil {
+					if hasReaction {
+						return m, unsetChannelReactionCmd(m.clientID, ch.teamID, ch.channelID, msgObj.ID, reactionType)
+					}
+					return m, setChannelReactionCmd(m.clientID, ch.teamID, ch.channelID, msgObj.ID, reactionType)
 				}
-				return m, setReactionCmd(m.clientID, chat.ID, msgObj.ID, reactionType)
+				chat := m.app.GetSelectedChat()
+				if chat != nil {
+					if hasReaction {
+						return m, unsetReactionCmd(m.clientID, chat.ID, msgObj.ID, reactionType)
+					}
+					return m, setReactionCmd(m.clientID, chat.ID, msgObj.ID, reactionType)
+				}
 			}
 		}
 	}
@@ -1441,10 +1817,14 @@ func (m Model) handleDeleteConfirmModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "y", "Y":
 		m.app.DeleteConfirmMode = false
 		m.app.MessageSelectionMode = false
-		chat := m.app.GetSelectedChat()
-		if chat != nil && m.app.MessageSelectedIndex < len(m.app.Messages) {
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
 			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
-			return m, deleteMessageCmd(m.clientID, chat.ID, msgObj.ID)
+			if ch := m.activeChannelEntry(); ch != nil {
+				return m, deleteChannelMessageCmd(m.clientID, ch.teamID, ch.channelID, msgObj.ID)
+			}
+			if chat := m.app.GetSelectedChat(); chat != nil {
+				return m, deleteMessageCmd(m.clientID, chat.ID, msgObj.ID)
+			}
 		}
 	case "n", "N", "esc":
 		m.app.DeleteConfirmMode = false
@@ -1533,12 +1913,11 @@ func (m Model) View() string {
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	mainView := lipgloss.JoinVertical(lipgloss.Left, top, m.renderStatusBar(m.width))
 
+	var result string
 	if m.app.UrlSelectionMode {
 		modal := m.renderUrlSelection(m.width, m.height)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
-	}
-
-	if m.app.UserSearchPopupMode {
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	} else if m.app.UserSearchPopupMode {
 		popupW := m.width * 85 / 100
 		popupH := m.height * 80 / 100
 		if popupW < 40 {
@@ -1548,10 +1927,8 @@ func (m Model) View() string {
 			popupH = 10
 		}
 		modal := m.renderUserSearchPopup(popupW, popupH)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
-	}
-
-	if m.app.SearchPopupMode {
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	} else if m.app.SearchPopupMode {
 		popupW := m.width * 85 / 100
 		popupH := m.height * 80 / 100
 		if popupW < 40 {
@@ -1561,10 +1938,41 @@ func (m Model) View() string {
 			popupH = 10
 		}
 		modal := m.renderSearchPopup(popupW, popupH)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
-	}
-
-	if m.app.MessagePopupMode {
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	} else if m.app.HelpPopupMode {
+		popupW := m.width * 70 / 100
+		popupH := m.height * 85 / 100
+		if popupW < 50 {
+			popupW = 50
+		}
+		if popupH < 10 {
+			popupH = 10
+		}
+		modal := m.renderHelpPopup(popupW, popupH)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	} else if m.app.PresencePopupMode {
+		popupW := m.width * 55 / 100
+		popupH := m.height * 40 / 100
+		if popupW < 40 {
+			popupW = 40
+		}
+		if popupH < 10 {
+			popupH = 10
+		}
+		modal := m.renderPresencePopup(popupW, popupH)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	} else if m.app.UserProfilePopupMode {
+		popupW := m.width * 60 / 100
+		popupH := m.height * 50 / 100
+		if popupW < 40 {
+			popupW = 40
+		}
+		if popupH < 10 {
+			popupH = 10
+		}
+		modal := m.renderUserProfilePopup(popupW, popupH)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	} else if m.app.MessagePopupMode {
 		popupW := m.width * 85 / 100
 		popupH := m.height * 80 / 100
 		if popupW < 40 {
@@ -1574,18 +1982,84 @@ func (m Model) View() string {
 			popupH = 10
 		}
 		modal := m.renderMessagePopup(popupW, popupH)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
+	} else {
+		result = mainView
 	}
 
-	return mainView
+	var kittySeq string
+	if m.app.MessagePopupMode && m.app.Features.FilePreviewInTerminal && m.app.AttachmentCursorMode {
+		if m.app.MessageSelectedIndex >= 0 && m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			if m.app.AttachmentSelectedIndex >= 0 && m.app.AttachmentSelectedIndex < len(msgObj.Attachments) {
+				att := msgObj.Attachments[m.app.AttachmentSelectedIndex]
+				if isImageAttachment(att) {
+					if cp, err := getAttachmentCachePath(att); err == nil {
+						if _, err := os.Stat(cp); err == nil {
+							popupW := m.width * 85 / 100
+							popupH := m.height * 80 / 100
+							if popupW < 40 {
+								popupW = 40
+							}
+							if popupH < 10 {
+								popupH = 10
+							}
+
+							popupX := (m.width - popupW) / 2
+							popupY := (m.height - popupH) / 2
+
+							innerW := popupW - 6
+							innerH := popupH - 4
+							if innerW < 10 {
+								innerW = 10
+							}
+							if innerH < 4 {
+								innerH = 4
+							}
+
+							previewW := innerW * 45 / 100
+							if previewW < 15 {
+								previewW = 15
+							}
+							if previewW > innerW-25 {
+								previewW = innerW - 25
+							}
+
+							if previewW >= 15 {
+								leftW := innerW - previewW - 2
+								rightPanelX := popupX + 3 + leftW + 2
+								imgX := rightPanelX + 1
+								imgY := popupY + 3
+								imgW := previewW - 2
+								imgH := (innerH - 1) - 2 // targetH - 2
+
+								// Clear all, then draw image
+								kittySeq = "\x1b_Ga=d,d=a\x1b\\" + kittyImageSequence(cp, imgX, imgY, imgW, imgH)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return result + kittySeq
 }
 
 // renderRightPanel renders the messages panel (with optional input area).
 func (m Model) renderRightPanel(w, h int) string {
 	if !m.app.InputMode {
-		title := "Messages (i:compose, m:select, K/J:scroll, /:search)"
-		if m.app.MessageSelectionMode {
-			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, d:delete, e:edit, a:answer, v:view, ESC/m:exit)"
+		title := "Messages (i:compose, m:select, K/J:scroll, /:search, ?:help)"
+		if m.channelSelectedIndex >= 0 {
+			chans := m.allChannels()
+			if m.channelSelectedIndex < len(chans) {
+				entry := chans[m.channelSelectedIndex]
+				title = lipgloss.NewStyle().Foreground(lipgloss.Color("#5F87FF")).Bold(true).Render("#") +
+					" " + entry.teamName + " » " + entry.channelName +
+					lipgloss.NewStyle().Foreground(colDimGray).Render("  (K/J:scroll, m:select, ?:help)")
+			}
+		} else if m.app.MessageSelectionMode {
+			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, d:delete, e:edit, a:answer, v:view, p:presence, i:profile, ESC/m:exit)"
 		}
 		msgContent := m.renderMessages(w, h-1)
 		return normalBorder.Width(w).Height(h).
@@ -1612,6 +2086,8 @@ func (m Model) renderRightPanel(w, h int) string {
 	title := "Messages (ESC to cancel)"
 	if m.app.EditingMessageID != nil {
 		title = "EDITING MESSAGE (ESC to cancel)"
+	} else if m.app.ChannelReplyToID != "" {
+		title = "REPLYING TO THREAD (ESC to cancel)"
 	} else if m.app.ReplyToMessage != nil {
 		ref := m.app.ReplyToMessage
 		sender := "someone"
@@ -1634,7 +2110,7 @@ func (m Model) renderRightPanel(w, h int) string {
 
 	// Build input box contents — add quote preview when replying.
 	hintLine := lipgloss.NewStyle().Foreground(colDimGray).
-		Render("Type your message (Enter to send, Alt+Enter for new line, ESC to cancel)")
+		Render("Type your message (Enter to send, Alt+Enter for new line, ESC to cancel, paste IMAGE)")
 	inputParts := []string{hintLine}
 
 	if m.app.ReplyToMessage != nil {
@@ -1714,6 +2190,8 @@ func (m Model) chatTypeToIcon(chatType string) string {
 			return "[group]"
 		case "meeting":
 			return "[meeting]"
+		case "channel":
+			return "[channel]"
 		default:
 			return "[" + chatType + "]"
 		}
@@ -1727,35 +2205,104 @@ func (m Model) chatTypeToIcon(chatType string) string {
 			return "⊞"
 		case "meeting":
 			return "⊛"
+		case "channel":
+			return "☰"
 		default:
 			return "◈"
 		}
 	}
 }
 
+// channelEntry is a flat representation of one Team channel for sidebar navigation.
+type channelEntry struct {
+	teamID      string
+	teamName    string
+	channelID   string
+	channelName string
+}
+
+// allChannels returns the flat ordered list of all channels across all teams.
+func (m Model) allChannels() []channelEntry {
+	var list []channelEntry
+	for _, twc := range m.app.TeamsData {
+		for _, ch := range twc.Channels {
+			list = append(list, channelEntry{
+				teamID:      twc.Team.ID,
+				teamName:    twc.Team.DisplayName,
+				channelID:   ch.ID,
+				channelName: ch.DisplayName,
+			})
+		}
+	}
+	return list
+}
+
+// activeChannelEntry returns the currently selected channelEntry when in channel
+// mode (channelSelectedIndex >= 0), or nil if the user is in chat mode.
+func (m Model) activeChannelEntry() *channelEntry {
+	if m.channelSelectedIndex < 0 {
+		return nil
+	}
+	chans := m.allChannels()
+	if m.channelSelectedIndex >= len(chans) {
+		return nil
+	}
+	e := chans[m.channelSelectedIndex]
+	return &e
+}
+
 func (m Model) renderChatList(w, h int) string {
-	title := lipgloss.NewStyle().Foreground(colDimGray).
-		Render("Chats (j/k: nav, c: find, f: ★ fav, q: quit)")
+	titleText := "Chats (j/k: nav, c: find, f: ★ fav, q: quit)"
+	if m.app.Features.TeamsChannels {
+		titleText = "Chats (j/k: nav, Tab: switch, c: find, f: ★ fav, q: quit)"
+	}
+	title := lipgloss.NewStyle().Foreground(colDimGray).Render(titleText)
 
 	if len(m.app.Chats) == 0 {
 		return lipgloss.JoinVertical(lipgloss.Left, title, m.app.Status)
 	}
 
-	visibleCount := h - 1
-	if visibleCount < 1 {
-		visibleCount = 1
+	// Total lines available = h minus the title row.
+	budget := h - 1
+	if budget < 1 {
+		budget = 1
 	}
 
+	// ── Calculate how many lines the Teams section will consume ──────────
+	chans := m.allChannels()
+	teamsLines := 0 // lines consumed by the Teams section (divider + entries)
+	if m.app.Features.TeamsChannels {
+		if m.app.TeamsDataLoading {
+			teamsLines = 1 // just the loading divider
+		} else if len(chans) > 0 {
+			teamsLines = 1 + len(chans) // divider + all channel rows
+		}
+	}
+
+	// Give the Teams section at most half the budget so chats always remain visible.
+	if teamsLines > budget/2 {
+		teamsLines = budget / 2
+		if teamsLines < 1 {
+			teamsLines = 1
+		}
+	}
+
+	chatBudget := budget - teamsLines
+	if chatBudget < 1 {
+		chatBudget = 1
+	}
+
+	// ── Chats section ────────────────────────────────────────────────────
 	if m.app.SelectedIndex < m.app.ChatScrollOffset {
 		m.app.ChatScrollOffset = m.app.SelectedIndex
-	} else if m.app.SelectedIndex >= m.app.ChatScrollOffset+visibleCount {
-		m.app.ChatScrollOffset = m.app.SelectedIndex - visibleCount + 1
+	} else if m.app.SelectedIndex >= m.app.ChatScrollOffset+chatBudget {
+		m.app.ChatScrollOffset = m.app.SelectedIndex - chatBudget + 1
 	}
 
 	lines := []string{title}
 
 	start := m.app.ChatScrollOffset
-	end := start + visibleCount
+	end := start + chatBudget
 	if end > len(m.app.Chats) {
 		end = len(m.app.Chats)
 	}
@@ -1786,7 +2333,7 @@ func (m Model) renderChatList(w, h int) string {
 		labelStr := prefix + chatTypeIcon + " " + displayName
 
 		var label string
-		if i == m.app.SelectedIndex {
+		if i == m.app.SelectedIndex && m.channelSelectedIndex < 0 {
 			label = lipgloss.NewStyle().
 				Foreground(colYellow).
 				Bold(unread || reactionEmoji != "").
@@ -1816,8 +2363,61 @@ func (m Model) renderChatList(w, h int) string {
 		lines = append(lines, label)
 	}
 
+	// ── Teams channels section ───────────────────────────────────────────
+	if m.app.Features.TeamsChannels && teamsLines > 0 {
+		if m.app.TeamsDataLoading {
+			divider := lipgloss.NewStyle().Foreground(colDimGray).Render("Teams (loading…)")
+			lines = append(lines, divider)
+		} else if len(chans) > 0 {
+			divider := lipgloss.NewStyle().Foreground(colDimGray).Render("Teams")
+			lines = append(lines, divider)
+
+			// Channel rows available = teamsLines - 1 (divider).
+			chanVisible := teamsLines - 1
+			if chanVisible < 1 {
+				chanVisible = 1
+			}
+
+			// Clamp channelScrollOffset so the selected entry stays visible.
+			if m.channelSelectedIndex >= 0 {
+				if m.channelSelectedIndex < m.channelScrollOffset {
+					m.channelScrollOffset = m.channelSelectedIndex
+				} else if m.channelSelectedIndex >= m.channelScrollOffset+chanVisible {
+					m.channelScrollOffset = m.channelSelectedIndex - chanVisible + 1
+				}
+			}
+
+			cStart := m.channelScrollOffset
+			if cStart < 0 {
+				cStart = 0
+			}
+			cEnd := cStart + chanVisible
+			if cEnd > len(chans) {
+				cEnd = len(chans)
+			}
+			for ci := cStart; ci < cEnd; ci++ {
+				entry := chans[ci]
+				icon := lipgloss.NewStyle().Foreground(lipgloss.Color("#5F87FF")).Render("#")
+				labelStr := icon + " " + entry.teamName + " » " + entry.channelName
+				var label string
+				if ci == m.channelSelectedIndex {
+					label = lipgloss.NewStyle().
+						Foreground(colYellow).
+						Background(colDarkGray).
+						Width(w).
+						MaxWidth(w).
+						Render("# " + entry.teamName + " » " + entry.channelName)
+				} else {
+					label = lipgloss.NewStyle().MaxWidth(w).Render(labelStr)
+				}
+				lines = append(lines, label)
+			}
+		}
+	}
+
 	return strings.Join(lines, "\n")
 }
+
 
 // ---------------------------------------------------------------------------
 // Messages rendering
@@ -1869,7 +2469,11 @@ func (m Model) renderMessages(w, h int) string {
 			msgTime.Day() != prevTime.Day() ||
 			msgTime.Hour() != prevTime.Hour())
 
-		if senderChanged || timeGap {
+		// Channel root messages always get their own header.
+		// Channel replies and regular chat messages group by sender/hour.
+		showHeader := senderChanged || timeGap || (m.channelSelectedIndex >= 0 && !msg.IsReply)
+
+		if showHeader {
 			if len(lines) > 0 {
 				lines = append(lines, "")
 			}
@@ -1878,7 +2482,24 @@ func (m Model) renderMessages(w, h int) string {
 				dateStr = msgTime.Format("Jan 02 15:04")
 			}
 			var header string
-			if m.isOwn(msg) {
+			if msg.IsReply {
+				// Reply: indent with ↳ prefix, dimmer colour.
+				replyPrefix := lipgloss.NewStyle().Foreground(colDimGray).Render("  ↳ ")
+				if m.isOwn(msg) {
+					senderName := "Me"
+					if m.app.SearchActive && m.app.SearchQuery != "" {
+						senderName = highlightQuery(senderName, m.app.SearchQuery)
+					}
+					h := lipgloss.NewStyle().Foreground(lipgloss.Color("#5FAF87")).Render(dateStr + " " + senderName + " ↳")
+					header = padLeft(h, w)
+				} else {
+					senderName := sender
+					if m.app.SearchActive && m.app.SearchQuery != "" {
+						senderName = highlightQuery(senderName, m.app.SearchQuery)
+					}
+					header = replyPrefix + lipgloss.NewStyle().Foreground(lipgloss.Color("#5F87AF")).Render(senderName+" "+dateStr)
+				}
+			} else if m.isOwn(msg) {
 				senderName := "Me"
 				if m.app.SearchActive && m.app.SearchQuery != "" {
 					senderName = highlightQuery(senderName, m.app.SearchQuery)
@@ -1896,6 +2517,12 @@ func (m Model) renderMessages(w, h int) string {
 		}
 		prevSender = sender
 		prevTime = msgTime
+		// After a root channel message, reset grouping so replies start fresh
+		// and don't accidentally group with the previous thread's replies.
+		if m.channelSelectedIndex >= 0 && !msg.IsReply {
+			prevSender = ""
+			prevTime = time.Time{}
+		}
 
 		// Render body.
 		body := msg.GetPlainText()
@@ -1913,7 +2540,13 @@ func (m Model) renderMessages(w, h int) string {
 			}
 		}
 
-		msgLines := wordWrap(body, maxW)
+		// Replies from others are left-indented; own messages (including own replies) are right-padded.
+		replyIndent := ""
+		if msg.IsReply && !m.isOwn(msg) {
+			replyIndent = "    " // 4 spaces aligning under "↳ "
+		}
+
+		msgLines := wordWrap(body, maxW-len(replyIndent))
 		padding := 0
 		if m.isOwn(msg) {
 			maxMsgW := 0
@@ -1935,7 +2568,7 @@ func (m Model) renderMessages(w, h int) string {
 			selectedStartLine = len(lines)
 		}
 		for _, line := range msgLines {
-			content := padStr + line
+			content := replyIndent + padStr + line
 			if isSelected {
 				content = lipgloss.NewStyle().
 					Background(colDarkGray).
@@ -3353,6 +3986,7 @@ const (
 	UserSearchItemLocal UserSearchItemType = iota
 	UserSearchItemDirectory
 	UserSearchItemDirect
+	UserSearchItemChannel
 )
 
 type UserSearchItem struct {
@@ -3360,16 +3994,25 @@ type UserSearchItem struct {
 	LocalChat   *Chat
 	DirUser     *User
 	DirectEmail string
+	Channel     *channelEntry
 }
 
 func (m Model) getUserSearchItems() []UserSearchItem {
 	var items []UserSearchItem
 
-	// Only Local results
+	// Local chats
 	for i := range m.app.UserSearchLocalResults {
 		items = append(items, UserSearchItem{
 			Type:      UserSearchItemLocal,
 			LocalChat: &m.app.UserSearchLocalResults[i],
+		})
+	}
+
+	// Channels
+	for i := range m.app.UserSearchChannelResults {
+		items = append(items, UserSearchItem{
+			Type:    UserSearchItemChannel,
+			Channel: &m.app.UserSearchChannelResults[i],
 		})
 	}
 
@@ -3380,6 +4023,7 @@ func (m *Model) updateUserSearchLocalResults() {
 	query := normalizeString(strings.ToLower(strings.TrimSpace(m.app.UserSearchQuery)))
 	if query == "" {
 		m.app.UserSearchLocalResults = nil
+		m.app.UserSearchChannelResults = nil
 		return
 	}
 
@@ -3407,6 +4051,18 @@ func (m *Model) updateUserSearchLocalResults() {
 		}
 	}
 	m.app.UserSearchLocalResults = matches
+
+	var chanMatches []channelEntry
+	if m.app.Features.TeamsChannels {
+		for _, ch := range m.allChannels() {
+			chanName := normalizeString(strings.ToLower(ch.channelName))
+			teamName := normalizeString(strings.ToLower(ch.teamName))
+			if strings.Contains(chanName, query) || strings.Contains(teamName, query) {
+				chanMatches = append(chanMatches, ch)
+			}
+		}
+	}
+	m.app.UserSearchChannelResults = chanMatches
 }
 
 func (m Model) handleUserSearchInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -3482,6 +4138,9 @@ func (m Model) handleUserSearchNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 			if idx != -1 {
 				m.app.SelectedIndex = idx
+				m.channelSelectedIndex = -1
+				m.app.SelectedChannelTeamID = ""
+				m.app.SelectedChannelID = ""
 				m.app.UserSearchPopupMode = false
 				m.app.UserSearchMode = false
 				m.app.Messages = nil
@@ -3490,6 +4149,28 @@ func (m Model) handleUserSearchNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.app.SnapToBottom = true
 				m.lastMessageRefresh = time.Now()
 				return m, loadMessagesCmd(m.clientID, targetID, idx)
+			}
+		} else if item.Type == UserSearchItemChannel {
+			chans := m.allChannels()
+			idx := -1
+			for i, ch := range chans {
+				if ch.channelID == item.Channel.channelID && ch.teamID == item.Channel.teamID {
+					idx = i
+					break
+				}
+			}
+			if idx != -1 {
+				m.channelSelectedIndex = idx
+				m.app.SelectedChannelTeamID = item.Channel.teamID
+				m.app.SelectedChannelID = item.Channel.channelID
+				m.app.UserSearchPopupMode = false
+				m.app.UserSearchMode = false
+				m.app.Messages = nil
+				m.app.NextLink = ""
+				m.app.SetLoadingMessages(true)
+				m.app.SnapToBottom = true
+				m.lastMessageRefresh = time.Now()
+				return m, loadChannelMessagesCmd(m.clientID, item.Channel.teamID, item.Channel.channelID)
 			}
 		}
 	}
@@ -3519,7 +4200,7 @@ func (m Model) renderUserSearchPopup(w, h int) string {
 		if m.app.UserSearchQuery == "" {
 			list.WriteString(lipgloss.NewStyle().Foreground(colDimGray).Render("Type a name/email and press Enter/arrows.") + "\n")
 		} else {
-			list.WriteString(lipgloss.NewStyle().Foreground(colDimGray).Render("No matching local chats found.") + "\n")
+			list.WriteString(lipgloss.NewStyle().Foreground(colDimGray).Render("No matching local chats or channels found.") + "\n")
 		}
 		for l := 1; l < msgH; l++ {
 			list.WriteString("\n")
@@ -3531,7 +4212,7 @@ func (m Model) renderUserSearchPopup(w, h int) string {
 		if m.app.UserSearchSelectedIndex < 0 {
 			m.app.UserSearchSelectedIndex = 0
 		}
-
+ 
 		linesRendered := 0
 		for idx, item := range items {
 			isSelected := idx == m.app.UserSearchSelectedIndex
@@ -3539,7 +4220,7 @@ func (m Model) renderUserSearchPopup(w, h int) string {
 			if isSelected {
 				prefix = "> "
 			}
-
+ 
 			var line string
 			switch item.Type {
 			case UserSearchItemLocal:
@@ -3549,6 +4230,16 @@ func (m Model) renderUserSearchPopup(w, h int) string {
 				}
 				tag := lipgloss.NewStyle().Foreground(colGreen).Render("[Local Chat]")
 				lineStr := fmt.Sprintf("%s %s %s", prefix, chatName, tag)
+				if isSelected {
+					line = lipgloss.NewStyle().Background(colDarkGray).Render(lineStr)
+				} else {
+					line = lineStr
+				}
+			case UserSearchItemChannel:
+				chanName := item.Channel.channelName
+				teamName := item.Channel.teamName
+				tag := lipgloss.NewStyle().Foreground(colCyan).Render("[Channel]")
+				lineStr := fmt.Sprintf("%s %s > %s %s", prefix, teamName, chanName, tag)
 				if isSelected {
 					line = lipgloss.NewStyle().Background(colDarkGray).Render(lineStr)
 				} else {
@@ -3609,6 +4300,7 @@ func (m Model) renderMessagePopup(w, h int) string {
 		return ""
 	}
 
+	m.app.Messages[m.app.MessageSelectedIndex].ProcessInlineImages()
 	msg := m.app.Messages[m.app.MessageSelectedIndex]
 
 	sender := "Unknown"
@@ -3635,6 +4327,43 @@ func (m Model) renderMessagePopup(w, h int) string {
 		innerH = 4
 	}
 
+	var showImagePreview bool
+	var previewDownloading bool
+
+	if m.app.Features.FilePreviewInTerminal && m.app.AttachmentCursorMode {
+		if m.app.MessageSelectedIndex >= 0 && m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			if m.app.AttachmentSelectedIndex >= 0 && m.app.AttachmentSelectedIndex < len(msgObj.Attachments) {
+				att := msgObj.Attachments[m.app.AttachmentSelectedIndex]
+				if isImageAttachment(att) {
+					showImagePreview = true
+					if cp, err := getAttachmentCachePath(att); err == nil {
+						if _, err := os.Stat(cp); err != nil {
+							previewDownloading = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	previewW := 0
+	contentW := innerW
+	if showImagePreview {
+		previewW = innerW * 45 / 100
+		if previewW < 15 {
+			previewW = 15
+		}
+		if previewW > innerW-25 {
+			previewW = innerW - 25
+		}
+		if previewW >= 15 {
+			contentW = innerW - previewW - 2
+		} else {
+			showImagePreview = false
+		}
+	}
+
 	headerLines := []string{
 		lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("From: ") + sender,
 		lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("Date: ") + timeStr,
@@ -3643,8 +4372,15 @@ func (m Model) renderMessagePopup(w, h int) string {
 
 	attachmentsLines := []string{}
 	if len(msg.Attachments) > 0 {
-		attachmentsLines = append(attachmentsLines, lipgloss.NewStyle().Foreground(colYellow).Bold(true).Render("Attachments:"))
-		for _, att := range msg.Attachments {
+		attHeaderStyle := lipgloss.NewStyle().Foreground(colYellow).Bold(true)
+		attHeader := "Attachments:"
+		if m.app.AttachmentCursorMode {
+			attHeader += " [Tab:exit | ↑↓:select | Enter:download]"
+		} else if m.app.Features.FilePreview {
+			attHeader += " [Tab to select & download]"
+		}
+		attachmentsLines = append(attachmentsLines, attHeaderStyle.Render(attHeader))
+		for i, att := range msg.Attachments {
 			name := "Unnamed attachment"
 			if att.Name != nil && *att.Name != "" {
 				name = *att.Name
@@ -3653,7 +4389,19 @@ func (m Model) renderMessagePopup(w, h int) string {
 			if att.ContentType != nil && *att.ContentType != "" {
 				contentType = fmt.Sprintf(" (%s)", *att.ContentType)
 			}
-			attachmentsLines = append(attachmentsLines, fmt.Sprintf("  📎 %s%s", name, contentType))
+			hasURL := att.ContentURL != nil && *att.ContentURL != ""
+			urlIndicator := ""
+			if hasURL && m.app.Features.FilePreview {
+				urlIndicator = " ↓"
+			}
+			lineText := fmt.Sprintf("📎 %s%s%s", name, contentType, urlIndicator)
+			var line string
+			if m.app.AttachmentCursorMode && i == m.app.AttachmentSelectedIndex {
+				line = lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("  ▶ " + lineText)
+			} else {
+				line = "  " + lineText
+			}
+			attachmentsLines = append(attachmentsLines, line)
 		}
 	}
 
@@ -3676,11 +4424,15 @@ func (m Model) renderMessagePopup(w, h int) string {
 
 	if len(msg.Reactions) > 0 {
 		reactionsLines = append(reactionsLines, lipgloss.NewStyle().Foreground(colYellow).Bold(true).Render("Reactions:"))
+		reactorsW := contentW - 6
+		if reactorsW < 10 {
+			reactorsW = 10
+		}
 		for _, emoji := range reactionOrder {
 			names := reactionsGrouped[emoji]
 			sort.Strings(names)
 			namesStr := strings.Join(names, ", ")
-			wrappedReactors := wordWrap(namesStr, innerW-6)
+			wrappedReactors := wordWrap(namesStr, reactorsW)
 			for i, wrLine := range wrappedReactors {
 				if i == 0 {
 					reactionsLines = append(reactionsLines, fmt.Sprintf("  %s %s", emoji, wrLine))
@@ -3709,7 +4461,7 @@ func (m Model) renderMessagePopup(w, h int) string {
 	body := msg.GetPlainText()
 	var wrappedBody []string
 	if body != "" {
-		wrappedBody = wordWrap(body, innerW)
+		wrappedBody = wordWrap(body, contentW)
 	}
 
 	var bodyLines []string
@@ -3771,12 +4523,40 @@ func (m Model) renderMessagePopup(w, h int) string {
 	}
 	finalLines = append(finalLines, footer)
 
+	var combinedContent string
+	if showImagePreview {
+		var previewText string
+		borderColor := colDarkGray
+		if previewDownloading {
+			previewText = "\n⏳ Loading preview..."
+		} else {
+			borderColor = colGreen
+		}
+
+		rightPanelStr := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(borderColor).
+			Width(previewW).Height(targetH).
+			Align(lipgloss.Center, lipgloss.Center).
+			Render(previewText)
+
+		leftPanelBodyStr := strings.Join(finalLines[:targetH], "\n")
+		leftAndRight := lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Width(contentW).Render(leftPanelBodyStr),
+			"  ",
+			rightPanelStr,
+		)
+		combinedContent = leftAndRight + "\n" + footer
+	} else {
+		combinedContent = strings.Join(finalLines, "\n")
+	}
+
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colCyan).
 		Padding(1, 2).
 		Width(w).Height(h).
-		Render(strings.Join(finalLines, "\n"))
+		Render(combinedContent)
 
 	return box
 }
@@ -3822,4 +4602,381 @@ func (m Model) resolveReactorName(r MessageReaction) string {
 	}
 
 	return "Someone"
+}
+
+// ---------------------------------------------------------------------------
+// Help popup
+// ---------------------------------------------------------------------------
+
+func (m Model) handleHelpPopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "?", "enter":
+		m.app.HelpPopupMode = false
+	}
+	return m, nil
+}
+
+func (m Model) renderHelpPopup(w, h int) string {
+	innerW := w - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+
+	title := lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("Keyboard Shortcuts")
+
+	sections := []struct {
+		name  string
+		binds [][2]string
+	}{
+		{"Navigation", [][2]string{
+			{"j / ↓", "Navigate list down (within section)"},
+			{"k / ↑", "Navigate list up (within section)"},
+			{"Tab", "Switch between Chats & Channels"},
+			{"m", "Enter message selection mode"},
+			{"i", "Compose new message"},
+			{"c", "Open chat search / open chat"},
+			{"/", "Search message history"},
+			{"f", "Toggle favourite (chats only)"},
+			{"n", "Cycle notification mode"},
+			{"?", "Show this help"},
+			{"q / Ctrl+C", "Quit"},
+		}},
+		{"Message Selection (m)", [][2]string{
+			{"j / k", "Navigate messages"},
+			{"v", "View message popup"},
+			{"y", "Yank message to clipboard"},
+			{"u", "Extract URLs"},
+			{"r", "React to message"},
+			{"a", "Reply (quote) message"},
+			{"d", "Delete message"},
+			{"e", "Edit message"},
+			{"p", "Presence status (feature: presence_enabled)"},
+			{"i", "User profile info (feature: user_profile_enabled)"},
+			{"ESC / m", "Exit selection mode"},
+		}},
+		{"Message View Popup (v)", [][2]string{
+			{"j / k", "Navigate to next/prev message"},
+			{"J / K", "Scroll message body"},
+			{"Tab", "Switch to attachment cursor mode"},
+			{"Enter", "Download selected attachment (feature: file_preview_enabled)"},
+			{"ESC / q / v", "Close popup"},
+		}},
+		{"History Search (/)", [][2]string{
+			{"Enter", "Submit query / focus results"},
+			{"j / k", "Navigate results"},
+			{"y", "Yank selected message"},
+			{"u", "Extract URLs"},
+			{"ESC", "Close search popup"},
+		}},
+		{"Chat Search (c)", [][2]string{
+			{"Type", "Filter local chats"},
+			{"Enter", "Open selected chat / direct open by email"},
+			{"j / k", "Navigate results"},
+			{"ESC", "Close popup"},
+		}},
+	}
+
+	labelStyle := lipgloss.NewStyle().Foreground(colYellow).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(colCyan)
+	dimStyle := lipgloss.NewStyle().Foreground(colDimGray)
+
+	var lines []string
+	lines = append(lines, title, "")
+
+	// Optional features status
+	var featureLines []string
+	featureLines = append(featureLines, labelStyle.Render("Optional Features:"))
+	featureState := func(enabled bool) string {
+		if enabled {
+			return lipgloss.NewStyle().Foreground(colGreen).Render("✓ enabled")
+		}
+		return dimStyle.Render("✗ disabled")
+	}
+	featureLines = append(featureLines,
+		fmt.Sprintf("  file_preview_enabled      %s", featureState(m.app.Features.FilePreview)),
+		fmt.Sprintf("  file_preview_in_terminal  %s", featureState(m.app.Features.FilePreviewInTerminal)),
+		fmt.Sprintf("  presence_enabled          %s", featureState(m.app.Features.Presence)),
+		fmt.Sprintf("  user_profile_enabled      %s", featureState(m.app.Features.UserProfile)),
+		fmt.Sprintf("  teams_channels_enabled    %s", featureState(m.app.Features.TeamsChannels)),
+	)
+	lines = append(lines, featureLines...)
+	lines = append(lines, "")
+
+	for _, sec := range sections {
+		lines = append(lines, labelStyle.Render(sec.name))
+		for _, bind := range sec.binds {
+			key := keyStyle.Render(fmt.Sprintf("  %-22s", bind[0]))
+			lines = append(lines, key+bind[1])
+		}
+		lines = append(lines, "")
+	}
+
+	footer := dimStyle.Italic(true).Render("Press ESC / q / ? to close")
+
+	// Trim or pad to fit
+	innerH := h - 4
+	if innerH < 4 {
+		innerH = 4
+	}
+	if len(lines) > innerH-1 {
+		lines = lines[:innerH-1]
+	} else {
+		for len(lines) < innerH-1 {
+			lines = append(lines, "")
+		}
+	}
+	lines = append(lines, footer)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colYellow).
+		Padding(1, 2).
+		Width(w).Height(h).
+		Render(strings.Join(lines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Presence popup
+// ---------------------------------------------------------------------------
+
+func (m Model) handlePresencePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "p", "enter":
+		m.app.PresencePopupMode = false
+		m.app.PresenceData = nil
+	}
+	return m, nil
+}
+
+func presenceAvailabilityColor(availability string) lipgloss.Color {
+	switch availability {
+	case "Available":
+		return colGreen
+	case "Busy", "DoNotDisturb":
+		return colRed
+	case "Away", "BeRightBack":
+		return colYellow
+	default:
+		return colDimGray
+	}
+}
+
+func presenceAvailabilityIcon(availability string) string {
+	switch availability {
+	case "Available":
+		return "🟢"
+	case "Busy":
+		return "🔴"
+	case "DoNotDisturb":
+		return "⛔"
+	case "Away", "BeRightBack":
+		return "🟡"
+	case "Offline", "PresenceUnknown":
+		return "⚫"
+	default:
+		return "❓"
+	}
+}
+
+func (m Model) renderPresencePopup(w, h int) string {
+	innerW := w - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+
+	title := lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("User Presence")
+	labelStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(colDimGray)
+
+	var lines []string
+	lines = append(lines, title, "")
+	lines = append(lines, labelStyle.Render("User: ")+m.app.PresenceUserName, "")
+
+	if m.app.PresenceLoading {
+		lines = append(lines, dimStyle.Render("Loading presence..."))
+	} else if m.app.PresenceData == nil {
+		lines = append(lines, lipgloss.NewStyle().Foreground(colRed).Render("Presence data unavailable"))
+	} else {
+		p := m.app.PresenceData
+		availColor := presenceAvailabilityColor(p.Availability)
+		icon := presenceAvailabilityIcon(p.Availability)
+		availStr := lipgloss.NewStyle().Foreground(availColor).Bold(true).Render(p.Availability)
+		lines = append(lines,
+			labelStyle.Render("Status:   ")+icon+" "+availStr,
+		)
+		if p.Activity != "" && p.Activity != p.Availability {
+			lines = append(lines, labelStyle.Render("Activity: ")+p.Activity)
+		}
+	}
+
+	footer := dimStyle.Italic(true).Render("Press ESC / q / p to close")
+	innerH := h - 4
+	if innerH < 4 {
+		innerH = 4
+	}
+	for len(lines) < innerH-1 {
+		lines = append(lines, "")
+	}
+	if len(lines) > innerH-1 {
+		lines = lines[:innerH-1]
+	}
+	lines = append(lines, footer)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colCyan).
+		Padding(1, 2).
+		Width(w).Height(h).
+		Render(strings.Join(lines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// User Profile popup
+// ---------------------------------------------------------------------------
+
+func (m Model) handleUserProfilePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "i", "enter":
+		m.app.UserProfilePopupMode = false
+		m.app.UserProfileData = nil
+	}
+	return m, nil
+}
+
+func (m Model) renderUserProfilePopup(w, h int) string {
+	innerW := w - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+	_ = innerW
+
+	title := lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("User Profile")
+	labelStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(colDimGray)
+
+	strOr := func(s *string) string {
+		if s == nil || *s == "" {
+			return dimStyle.Render("—")
+		}
+		return *s
+	}
+
+	var lines []string
+	lines = append(lines, title, "")
+
+	if m.app.UserProfileLoading {
+		lines = append(lines, dimStyle.Render("Loading profile..."))
+	} else if m.app.UserProfileData == nil {
+		lines = append(lines, lipgloss.NewStyle().Foreground(colRed).Render("Profile data unavailable"))
+	} else {
+		p := m.app.UserProfileData
+		lines = append(lines,
+			labelStyle.Render("Name:       ")+p.DisplayName,
+		)
+		if p.Mail != nil && *p.Mail != "" {
+			lines = append(lines, labelStyle.Render("Email:      ")+*p.Mail)
+		} else if p.UserPrincipalName != nil && *p.UserPrincipalName != "" {
+			lines = append(lines, labelStyle.Render("UPN:        ")+*p.UserPrincipalName)
+		}
+		if m.app.Features.ProfileExtended {
+			lines = append(lines,
+				labelStyle.Render("Job Title:  ")+strOr(p.JobTitle),
+				labelStyle.Render("Department: ")+strOr(p.Department),
+				labelStyle.Render("Office:     ")+strOr(p.OfficeLocation),
+			)
+			if p.MobilePhone != nil && *p.MobilePhone != "" {
+				lines = append(lines, labelStyle.Render("Mobile:     ")+*p.MobilePhone)
+			}
+		} else {
+			lines = append(lines, "", dimStyle.Italic(true).Render("Enable 'user_profile_extended' in config.json for job title, department, and more."))
+		}
+	}
+
+	footer := dimStyle.Italic(true).Render("Press ESC / q / i to close")
+	innerH := h - 4
+	if innerH < 4 {
+		innerH = 4
+	}
+	for len(lines) < innerH-1 {
+		lines = append(lines, "")
+	}
+	if len(lines) > innerH-1 {
+		lines = lines[:innerH-1]
+	}
+	lines = append(lines, footer)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colGreen).
+		Padding(1, 2).
+		Width(w).Height(h).
+		Render(strings.Join(lines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// getDownloadsDir returns the XDG downloads directory or ~/Downloads
+// ---------------------------------------------------------------------------
+func getDownloadsDir() string {
+	// Try XDG_DOWNLOAD_DIR environment variable first.
+	if dir := os.Getenv("XDG_DOWNLOAD_DIR"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	return filepath.Join(home, "Downloads")
+}
+
+// openFile attempts to open a file using the OS-specific default application.
+func openFile(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
+}
+
+// checkAndTriggerPreviewDownload verifies the current selected attachment in cursor mode,
+// and triggers an asynchronous preview download if it's an image and not yet cached.
+func (m Model) checkAndTriggerPreviewDownload() tea.Cmd {
+	if !m.app.Features.FilePreviewInTerminal || !m.app.AttachmentCursorMode {
+		return nil
+	}
+	if m.app.MessageSelectedIndex < 0 || m.app.MessageSelectedIndex >= len(m.app.Messages) {
+		return nil
+	}
+	msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+	if m.app.AttachmentSelectedIndex < 0 || m.app.AttachmentSelectedIndex >= len(msgObj.Attachments) {
+		return nil
+	}
+	att := msgObj.Attachments[m.app.AttachmentSelectedIndex]
+	if !isImageAttachment(att) {
+		// Not an image, clear any displayed preview
+		return clearKittyImagesCmd()
+	}
+	if att.ContentURL == nil || *att.ContentURL == "" {
+		return nil
+	}
+
+	cachePath, err := getAttachmentCachePath(att)
+	if err != nil {
+		return nil
+	}
+
+	// Check if already downloaded
+	if _, err := os.Stat(cachePath); err == nil {
+		// Already exists! Just trigger a redraw
+		return func() tea.Msg {
+			return MsgPreviewDownloaded{DestPath: cachePath}
+		}
+	}
+
+	// Download in background
+	return downloadPreviewCmd(m.clientID, *att.ContentURL, cachePath)
 }

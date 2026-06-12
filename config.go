@@ -71,6 +71,16 @@ type Config struct {
 	ChatLimit               *int              `json:"chat_limit,omitempty"`
 	ChatIconTheme           *string           `json:"chat_icon_theme,omitempty"`
 	CustomChatIcons         map[string]string `json:"custom_chat_icons,omitempty"`
+
+	// Optional feature flags — each defaults to false (disabled).
+	// When enabled, the corresponding Graph API permission must be granted
+	// in the Azure app registration and the cached token refreshed.
+	FilePreviewEnabled    *bool `json:"file_preview_enabled,omitempty"`    // requires Files.Read
+	FilePreviewInTerminal *bool `json:"file_preview_in_terminal,omitempty"` // show image in terminal if file_preview_enabled is true
+	PresenceEnabled       *bool `json:"presence_enabled,omitempty"`        // requires Presence.Read.All
+	UserProfileEnabled    *bool `json:"user_profile_enabled,omitempty"`   // requires User.ReadBasic.All
+	UserProfileExtended   *bool `json:"user_profile_extended,omitempty"`  // requires User.Read.All (admin consent)
+	TeamsChannelsEnabled  *bool `json:"teams_channels_enabled,omitempty"` // requires Team.ReadBasic.All + Channel.ReadBasic.All + ChannelMessage.Read.All + ChannelMessage.Send + ChannelMessage.ReadWrite
 }
 
 // GetAppDir returns ~/.config/teams-tui-go/, creating it if necessary.
@@ -179,6 +189,37 @@ func InitConfig() {
 		cfg.ChatIconTheme = &theme
 		modified = true
 	}
+	// Feature flags default to false (disabled) — written so users can see them in config.json.
+	if cfg.FilePreviewEnabled == nil {
+		v := false
+		cfg.FilePreviewEnabled = &v
+		modified = true
+	}
+	if cfg.FilePreviewInTerminal == nil {
+		v := false
+		cfg.FilePreviewInTerminal = &v
+		modified = true
+	}
+	if cfg.PresenceEnabled == nil {
+		v := false
+		cfg.PresenceEnabled = &v
+		modified = true
+	}
+	if cfg.UserProfileEnabled == nil {
+		v := false
+		cfg.UserProfileEnabled = &v
+		modified = true
+	}
+	if cfg.UserProfileExtended == nil {
+		v := false
+		cfg.UserProfileExtended = &v
+		modified = true
+	}
+	if cfg.TeamsChannelsEnabled == nil {
+		v := false
+		cfg.TeamsChannelsEnabled = &v
+		modified = true
+	}
 
 	if !exists || modified {
 		_ = SaveConfig(&cfg)
@@ -257,4 +298,69 @@ func ResolveChatLimit() int {
 		return limit
 	}
 	return 50
+}
+
+// ---------------------------------------------------------------------------
+// Feature flag resolvers
+// ---------------------------------------------------------------------------
+
+// ResolveFeatureFilePreview returns true when file preview/download is enabled.
+func ResolveFeatureFilePreview() bool {
+	cfg := LoadConfig()
+	return cfg != nil && cfg.FilePreviewEnabled != nil && *cfg.FilePreviewEnabled
+}
+
+// ResolveFeatureFilePreviewInTerminal returns true when file preview in terminal is enabled.
+func ResolveFeatureFilePreviewInTerminal() bool {
+	cfg := LoadConfig()
+	return cfg != nil && cfg.FilePreviewInTerminal != nil && *cfg.FilePreviewInTerminal
+}
+
+// ResolveFeaturePresence returns true when user presence status is enabled.
+func ResolveFeaturePresence() bool {
+	cfg := LoadConfig()
+	return cfg != nil && cfg.PresenceEnabled != nil && *cfg.PresenceEnabled
+}
+
+// ResolveFeatureUserProfile returns true when user profile info is enabled.
+func ResolveFeatureUserProfile() bool {
+	cfg := LoadConfig()
+	return cfg != nil && cfg.UserProfileEnabled != nil && *cfg.UserProfileEnabled
+}
+
+// ResolveFeatureUserProfileExtended returns true when extended profile (job title etc.) is enabled.
+// Requires User.Read.All which needs admin consent.
+func ResolveFeatureUserProfileExtended() bool {
+	cfg := LoadConfig()
+	return cfg != nil && cfg.UserProfileExtended != nil && *cfg.UserProfileExtended
+}
+
+// ResolveFeatureTeamsChannels returns true when Teams channels browsing is enabled.
+func ResolveFeatureTeamsChannels() bool {
+	cfg := LoadConfig()
+	return cfg != nil && cfg.TeamsChannelsEnabled != nil && *cfg.TeamsChannelsEnabled
+}
+
+// BuildScopes constructs the OAuth2 scope string from config feature flags.
+// Basic scopes are always included; additional scopes are appended for enabled features.
+func BuildScopes() string {
+	base := "User.Read Chat.ReadWrite offline_access"
+	if ResolveFeatureFilePreview() {
+		base += " Files.Read"
+	}
+	if ResolveFeaturePresence() {
+		base += " Presence.Read.All"
+	}
+	if ResolveFeatureUserProfile() {
+		if ResolveFeatureUserProfileExtended() {
+			base += " User.Read.All"
+		} else {
+			base += " User.ReadBasic.All"
+		}
+	}
+	if ResolveFeatureTeamsChannels() {
+		// base += " Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send ChannelMessage.ReadWrite"
+		base += " Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send"
+	}
+	return base
 }

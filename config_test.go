@@ -223,3 +223,121 @@ func TestResolveChatLimit(t *testing.T) {
 		t.Errorf("expected chat limit to be capped at 100, got %d", resolved)
 	}
 }
+func TestBuildScopes(t *testing.T) {
+	// Set XDG_CONFIG_HOME to a temporary directory.
+	tmpDir, err := os.MkdirTemp("", "teams-tui-scopes-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	oldXdg := os.Getenv("XDG_CONFIG_HOME")
+	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
+	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Case 1: No features enabled — only basic scopes.
+	InitConfig()
+	scopes := BuildScopes()
+	for _, required := range []string{"User.Read", "Chat.ReadWrite", "offline_access"} {
+		found := false
+		for _, s := range splitScopes(scopes) {
+			if s == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("basic scope %q missing from %q", required, scopes)
+		}
+	}
+	for _, unexpected := range []string{"Presence.Read.All", "Files.Read", "User.ReadBasic.All", "User.Read.All", "Team.ReadBasic.All"} {
+		for _, s := range splitScopes(scopes) {
+			if s == unexpected {
+				t.Errorf("unexpected scope %q present when feature is disabled", unexpected)
+			}
+		}
+	}
+
+	// Case 2: Enable presence — Presence.Read.All should appear.
+	appDir, _ := GetAppDir()
+	cfgPath := filepath.Join(appDir, "config.json")
+	cfg := LoadConfig()
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	presenceOn := true
+	cfg.PresenceEnabled = &presenceOn
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	scopes2 := BuildScopes()
+	found := false
+	for _, s := range splitScopes(scopes2) {
+		if s == "Presence.Read.All" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Presence.Read.All missing when presence_enabled=true, scopes=%q", scopes2)
+	}
+	_ = cfgPath
+}
+
+// splitScopes splits a space-separated scope string into individual scopes.
+func splitScopes(s string) []string {
+	var result []string
+	current := ""
+	for _, c := range s {
+		if c == ' ' {
+			if current != "" {
+				result = append(result, current)
+				current = ""
+			}
+		} else {
+			current += string(c)
+		}
+	}
+	if current != "" {
+		result = append(result, current)
+	}
+	return result
+}
+
+func TestResolveFeatureFilePreviewInTerminal(t *testing.T) {
+	// Set XDG_CONFIG_HOME to a temporary directory.
+	tmpDir, err := os.MkdirTemp("", "teams-tui-preview-terminal-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	oldXdg := os.Getenv("XDG_CONFIG_HOME")
+	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
+	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Write custom config with file_preview_in_terminal = true.
+	appDir, err := GetAppDir()
+	if err != nil {
+		t.Fatalf("GetAppDir failed: %v", err)
+	}
+	configPath := filepath.Join(appDir, "config.json")
+
+	val := true
+	cfg := Config{
+		FilePreviewInTerminal: &val,
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	resolved := ResolveFeatureFilePreviewInTerminal()
+	if !resolved {
+		t.Errorf("expected file_preview_in_terminal to resolve to true, got false")
+	}
+}
