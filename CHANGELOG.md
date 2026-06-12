@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.0.1] - 2026-06-12
+
+### Bug Fixes
+
+- **Fixing pipeline for windows** - ([0df7bf1](https://github.com/nospor/teams-tui-go/commit/0df7bf1551676cebcd9ed4f2646ba9c86e65d1b2))
+
+
+
+### Other
+
+- **Merge branch 'main' of github.com:nospor/teams-tui-go** - ([95ae7d6](https://github.com/nospor/teams-tui-go/commit/95ae7d63bed3146456522073763fa6fd9bb26eab))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.0.0 [skip ci]** - ([7c9253d](https://github.com/nospor/teams-tui-go/commit/7c9253d4b686d09f771be1a4cd75270bc830bbde))
+
+
+
 ## [1.0.0] - 2026-06-12
 
 ### Features
