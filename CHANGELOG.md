@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.0.2] - 2026-06-12
+
+### Features
+
+- *(ui)* **Implement sleep mode and focus-aware background polling** - ([a77ce90](https://github.com/nospor/teams-tui-go/commit/a77ce9082f6d1316ae69c3cd69dcc7c57361c100))
+
+
+> - Pause 3-second active chat polling when terminal window is blurred
+> (unfocused) or when no chat is selected.
+> - Add normal mode Esc shortcut to manually de-select chat/channel and
+> enter sleep mode.
+> - Render a centered dimmed sleep mode placeholder in the right panel
+> when inactive.
+> - Immediately wake up and fetch fresh messages when focusing the window
+> or selecting a chat/channel.
+> - Guard keys requiring an active chat context (input, search, scroll)
+> when sleep mode is active.
+> - Fix a bug where the '?' key did not trigger the help popup in normal
+> mode.
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.0.1 [skip ci]** - ([3b80713](https://github.com/nospor/teams-tui-go/commit/3b8071391ace491e13bbdb2485b521af124ec1a3))
+
+
+
 ## [1.0.1] - 2026-06-12
 
 ### Bug Fixes
