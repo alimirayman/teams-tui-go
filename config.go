@@ -55,6 +55,48 @@ func SaveFavourites(favs map[string]bool) error {
 	return os.WriteFile(filepath.Join(dir, "favourites.json"), data, 0o600)
 }
 
+// LoadUnhiddenChannels reads the list of unhidden channel IDs from unhidden_channels.json.
+// Returns an empty map if the file does not exist or cannot be parsed.
+func LoadUnhiddenChannels() map[string]bool {
+	dir, err := GetAppDir()
+	if err != nil {
+		return make(map[string]bool)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "unhidden_channels.json"))
+	if err != nil {
+		return make(map[string]bool)
+	}
+	var ids []string
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return make(map[string]bool)
+	}
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
+
+// SaveUnhiddenChannels writes the current unhidden channel IDs to unhidden_channels.json.
+func SaveUnhiddenChannels(unhidden map[string]bool) error {
+	dir, err := GetAppDir()
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(unhidden))
+	for id := range unhidden {
+		ids = append(ids, id)
+	}
+	// Sort for deterministic output.
+	sort.Strings(ids)
+	data, err := json.MarshalIndent(ids, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not marshal unhidden channels: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, "unhidden_channels.json"), data, 0o600)
+}
+
+
 const appDirName = "teams-tui-go"
 
 // defaultClientID is the Microsoft Teams client ID fallback.
@@ -81,6 +123,7 @@ type Config struct {
 	UserProfileEnabled    *bool `json:"user_profile_enabled,omitempty"`   // requires User.ReadBasic.All
 	UserProfileExtended   *bool `json:"user_profile_extended,omitempty"`  // requires User.Read.All (admin consent)
 	TeamsChannelsEnabled  *bool `json:"teams_channels_enabled,omitempty"` // requires Team.ReadBasic.All + Channel.ReadBasic.All + ChannelMessage.Read.All + ChannelMessage.Send + ChannelMessage.ReadWrite
+	ChannelMsgRefreshMin   *int  `json:"channel_msg_refresh_min,omitempty"`
 }
 
 // GetAppDir returns ~/.config/teams-tui-go/, creating it if necessary.
@@ -220,6 +263,11 @@ func InitConfig() {
 		cfg.TeamsChannelsEnabled = &v
 		modified = true
 	}
+	if cfg.ChannelMsgRefreshMin == nil {
+		val := 2
+		cfg.ChannelMsgRefreshMin = &val
+		modified = true
+	}
 
 	if !exists || modified {
 		_ = SaveConfig(&cfg)
@@ -298,6 +346,18 @@ func ResolveChatLimit() int {
 		return limit
 	}
 	return 50
+}
+
+// ResolveChannelMsgRefreshMin returns the channel messages refresh interval in minutes.
+// Precedence:
+//  1. config.json -> channel_msg_refresh_min
+//  2. Default (2)
+func ResolveChannelMsgRefreshMin() int {
+	cfg := LoadConfig()
+	if cfg != nil && cfg.ChannelMsgRefreshMin != nil && *cfg.ChannelMsgRefreshMin > 0 {
+		return *cfg.ChannelMsgRefreshMin
+	}
+	return 2
 }
 
 // ---------------------------------------------------------------------------

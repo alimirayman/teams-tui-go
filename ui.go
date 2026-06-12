@@ -223,6 +223,20 @@ type Model struct {
 	// Loaded from and persisted to favourites.json in the app config dir.
 	favourites map[string]bool
 
+	// unhiddenChannels holds channel IDs that are unhidden by the user.
+	// Loaded from and persisted to unhidden_channels.json in the app config dir.
+	unhiddenChannels map[string]bool
+
+	// lastChannelRefresh tracks the last background refresh for channels.
+	lastChannelRefresh time.Time
+
+	// originalTeamIndex maps team ID to its original index in TeamsData when loaded.
+	originalTeamIndex map[string]int
+
+	// originalChannelIndex maps channel ID to its original index in its team's channel list when loaded.
+	originalChannelIndex map[string]int
+
+
 	// Channel sidebar navigation (used when teams_channels_enabled).
 	// channelSelectedIndex is an index into the flat list returned by allChannels().
 	// -1 means focus is in the chat list (default).
@@ -262,6 +276,9 @@ func NewModel(app *App, clientID, userID string) Model {
 		notifiedReactions:    make(map[string]map[string]bool),
 		pendingEdits:         make(map[string]string),
 		favourites:           make(map[string]bool),
+		unhiddenChannels:     make(map[string]bool),
+		originalTeamIndex:    make(map[string]int),
+		originalChannelIndex: make(map[string]int),
 		focused:              true,
 		channelSelectedIndex: -1,
 	}
@@ -331,15 +348,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, loadChatsCmd(m.clientID, m.app.Chats, m.app.CurrentUserName))
 		}
 
-		// Periodic message refresh every ~3 s — skip when viewing a channel, when unfocused, or in sleep/idle mode.
-		if m.channelSelectedIndex < 0 &&
-			m.app.GetSelectedChat() != nil &&
-			m.focused &&
-			time.Since(m.lastMessageRefresh) >= 3*time.Second {
-			m.lastMessageRefresh = time.Now()
-			chat := m.app.GetSelectedChat()
-			idx := m.app.SelectedIndex
-			cmds = append(cmds, loadMessagesCmd(m.clientID, chat.ID, idx))
+		isSleepMode := (m.app.SelectedIndex < 0 && m.channelSelectedIndex < 0)
+
+		// Periodic channel message refresh every ChannelMsgRefreshMin minutes.
+		refreshDur := time.Duration(m.app.ChannelMsgRefreshMin) * time.Minute
+		if refreshDur <= 0 {
+			refreshDur = 2 * time.Minute
+		}
+		if m.app.Features.TeamsChannels && m.focused && !isSleepMode && time.Since(m.lastChannelRefresh) >= refreshDur {
+			m.lastChannelRefresh = time.Now()
+			for _, twc := range m.app.TeamsData {
+				for _, ch := range twc.Channels {
+					if m.unhiddenChannels[ch.ID] {
+						cmds = append(cmds, loadChannelMessagesCmd(m.clientID, twc.Team.ID, ch.ID))
+					}
+				}
+			}
+		}
+
+		// Periodic message refresh every ~3 s — skip when unfocused or in sleep/idle mode.
+		if m.focused && !isSleepMode && time.Since(m.lastMessageRefresh) >= 3*time.Second {
+			if m.channelSelectedIndex < 0 && m.app.GetSelectedChat() != nil {
+				m.lastMessageRefresh = time.Now()
+				chat := m.app.GetSelectedChat()
+				idx := m.app.SelectedIndex
+				cmds = append(cmds, loadMessagesCmd(m.clientID, chat.ID, idx))
+			} else if m.channelSelectedIndex >= 0 {
+				chans := m.allChannels()
+				if m.channelSelectedIndex < len(chans) {
+					m.lastMessageRefresh = time.Now()
+					entry := chans[m.channelSelectedIndex]
+					cmds = append(cmds, loadChannelMessagesCmd(m.clientID, entry.teamID, entry.channelID))
+				}
+			}
 		}
 
 		// Periodic reaction poll every ~10 s for other active chats.
@@ -1007,6 +1048,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.app.TeamsDataLoading = false
 		if msg.Err == nil {
 			m.app.TeamsData = msg.Teams
+			// Record original order indexes
+			m.originalTeamIndex = make(map[string]int)
+			m.originalChannelIndex = make(map[string]int)
+			for i, twc := range m.app.TeamsData {
+				m.originalTeamIndex[twc.Team.ID] = i
+				for j, ch := range twc.Channels {
+					m.originalChannelIndex[ch.ID] = j
+				}
+			}
+
+			// Re-sort teams and channels
+			m.sortTeamsAndChannels()
+
+			// Fetch messages for all unhidden channels immediately
+			if m.app.Features.TeamsChannels {
+				for _, twc := range m.app.TeamsData {
+					for _, ch := range twc.Channels {
+						if m.unhiddenChannels[ch.ID] {
+							cmds = append(cmds, loadChannelMessagesCmd(m.clientID, twc.Team.ID, ch.ID))
+						}
+					}
+				}
+			}
 		} else {
 			m.app.SetStatus("Teams unavailable: "+msg.Err.Error(), 4*time.Second)
 		}
@@ -1017,10 +1081,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.app.SetStatus("Channel messages unavailable: "+msg.Err.Error(), 5*time.Second)
 			m.app.SelectedChannelTeamID = ""
 			m.app.SelectedChannelID = ""
-		} else if msg.TeamID == m.app.SelectedChannelTeamID && msg.ChannelID == m.app.SelectedChannelID {
-			m.app.Messages = msg.Messages
-			m.app.NextLink = msg.NextLink
-			m.app.SetLoadingMessages(false)
+		} else {
+			// Cache messages and next link
+			m.app.CachedMessages[msg.ChannelID] = msg.Messages
+			m.app.CachedNextLink[msg.ChannelID] = msg.NextLink
+
+			// Check if active channel
+			isActiveChannel := (m.channelSelectedIndex >= 0 &&
+				msg.TeamID == m.app.SelectedChannelTeamID &&
+				msg.ChannelID == m.app.SelectedChannelID)
+
+			if isActiveChannel {
+				m.app.Messages = msg.Messages
+				m.app.NextLink = msg.NextLink
+				m.app.SetLoadingMessages(false)
+			}
+
+			// Update lastMsgID and lastMsgTime
+			if len(msg.Messages) > 0 {
+				newest := msg.Messages[0]
+				prevID, ok := m.lastMsgID[msg.ChannelID]
+				newTime, _ := time.Parse(time.RFC3339Nano, newest.CreatedDateTime)
+
+				if isActiveChannel && m.focused {
+					m.lastMsgID[msg.ChannelID] = newest.ID
+					m.lastMsgTime[msg.ChannelID] = newTime
+					m.lastReadMsgID[msg.ChannelID] = newest.ID
+				} else {
+					if ok && prevID != newest.ID && !m.lastMsgTime[msg.ChannelID].IsZero() && newTime.After(m.lastMsgTime[msg.ChannelID].Add(time.Second)) {
+						m.lastMsgID[msg.ChannelID] = newest.ID
+						m.lastMsgTime[msg.ChannelID] = newTime
+
+						isOwnMsg := m.isOwn(newest)
+						if isOwnMsg {
+							m.lastReadMsgID[msg.ChannelID] = newest.ID
+						} else {
+							// Trigger notification
+							senderName := ""
+							if newest.From != nil && newest.From.User != nil && newest.From.User.DisplayName != nil {
+								senderName = *newest.From.User.DisplayName
+							}
+							m.notify(senderName, newest)
+						}
+					} else if !ok || m.lastMsgTime[msg.ChannelID].IsZero() {
+						// First time loading for channel in this session, mark as read
+						m.lastMsgID[msg.ChannelID] = newest.ID
+						m.lastMsgTime[msg.ChannelID] = newTime
+						m.lastReadMsgID[msg.ChannelID] = newest.ID
+					}
+				}
+			}
+
+			// Re-sort teams and channels and preserve channelSelectedIndex.
+			var selectedChanID string
+			if entry := m.activeChannelEntry(); entry != nil {
+				selectedChanID = entry.channelID
+			}
+
+			m.sortTeamsAndChannels()
+
+			if selectedChanID != "" {
+				chans := m.allChannels()
+				for idx, entry := range chans {
+					if entry.channelID == selectedChanID {
+						m.channelSelectedIndex = idx
+						break
+					}
+				}
+			}
 		}
 
 	// ── Keyboard input ────────────────────────────────────────────────────
@@ -1342,6 +1470,41 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			for i, c := range m.app.Chats {
 				if c.ID == chat.ID {
 					m.app.SelectedIndex = i
+					break
+				}
+			}
+		}
+
+	case "h":
+		// Toggle hide/unhide on the selected channel — no-op in chat mode.
+		if m.channelSelectedIndex < 0 {
+			break
+		}
+		chans := m.allChannels()
+		if m.channelSelectedIndex < len(chans) {
+			entry := chans[m.channelSelectedIndex]
+			if m.unhiddenChannels[entry.channelID] {
+				delete(m.unhiddenChannels, entry.channelID)
+				m.app.SetStatus("Muted channel (hidden): "+entry.channelName, 3*time.Second)
+			} else {
+				m.unhiddenChannels[entry.channelID] = true
+				m.app.SetStatus("Unhidden channel: "+entry.channelName, 3*time.Second)
+
+				_ = SaveUnhiddenChannels(m.unhiddenChannels)
+				m.sortTeamsAndChannels()
+				for idx, e := range m.allChannels() {
+					if e.channelID == entry.channelID {
+						m.channelSelectedIndex = idx
+						break
+					}
+				}
+				return m, loadChannelMessagesCmd(m.clientID, entry.teamID, entry.channelID)
+			}
+			_ = SaveUnhiddenChannels(m.unhiddenChannels)
+			m.sortTeamsAndChannels()
+			for idx, e := range m.allChannels() {
+				if e.channelID == entry.channelID {
+					m.channelSelectedIndex = idx
 					break
 				}
 			}
@@ -2266,6 +2429,9 @@ func (m Model) chatTypeToIcon(chatType string) string {
 	}
 }
 
+// sortTeamsAndChannels is a no-op because sorting is now performed globally inside allChannels.
+func (m Model) sortTeamsAndChannels() {}
+
 // channelEntry is a flat representation of one Team channel for sidebar navigation.
 type channelEntry struct {
 	teamID      string
@@ -2274,7 +2440,9 @@ type channelEntry struct {
 	channelName string
 }
 
-// allChannels returns the flat ordered list of all channels across all teams.
+// allChannels returns the flat ordered list of all channels across all teams,
+// sorted globally: unhidden channels first (sorted by last message activity),
+// followed by hidden channels (sorted in their original default order).
 func (m Model) allChannels() []channelEntry {
 	var list []channelEntry
 	for _, twc := range m.app.TeamsData {
@@ -2287,6 +2455,37 @@ func (m Model) allChannels() []channelEntry {
 			})
 		}
 	}
+
+	sort.Slice(list, func(i, j int) bool {
+		idA := list[i].channelID
+		idB := list[j].channelID
+		isAHidden := !m.unhiddenChannels[idA]
+		isBHidden := !m.unhiddenChannels[idB]
+
+		if isAHidden != isBHidden {
+			return !isAHidden
+		}
+
+		if !isAHidden {
+			timeA := m.lastMsgTime[idA]
+			timeB := m.lastMsgTime[idB]
+			if !timeA.Equal(timeB) {
+				return timeA.After(timeB)
+			}
+		}
+
+		// Fallback to original default order
+		if len(m.originalChannelIndex) == 0 {
+			if list[i].teamName != list[j].teamName {
+				return list[i].teamName < list[j].teamName
+			}
+			return list[i].channelName < list[j].channelName
+		}
+		flatIndexA := m.originalTeamIndex[list[i].teamID]*1000 + m.originalChannelIndex[idA]
+		flatIndexB := m.originalTeamIndex[list[j].teamID]*1000 + m.originalChannelIndex[idB]
+		return flatIndexA < flatIndexB
+	})
+
 	return list
 }
 
@@ -2427,7 +2626,11 @@ func (m Model) renderChatList(w, h int) string {
 			divider := lipgloss.NewStyle().Foreground(colDimGray).Render("Teams (loading…)")
 			lines = append(lines, divider)
 		} else if len(chans) > 0 {
-			divider := lipgloss.NewStyle().Foreground(colDimGray).Render("Teams")
+			dividerText := "Teams"
+			if m.channelSelectedIndex >= 0 {
+				dividerText = "Teams (h: toggle hide)"
+			}
+			divider := lipgloss.NewStyle().Foreground(colDimGray).Render(dividerText)
 			lines = append(lines, divider)
 
 			// Channel rows available = teamsLines - 1 (divider).
@@ -2455,18 +2658,43 @@ func (m Model) renderChatList(w, h int) string {
 			}
 			for ci := cStart; ci < cEnd; ci++ {
 				entry := chans[ci]
-				icon := lipgloss.NewStyle().Foreground(lipgloss.Color("#5F87FF")).Render("#")
-				labelStr := icon + " " + entry.teamName + " » " + entry.channelName
+				isHidden := !m.unhiddenChannels[entry.channelID]
+				unread := m.lastMsgID[entry.channelID] != "" && m.lastReadMsgID[entry.channelID] != m.lastMsgID[entry.channelID]
+
+				prefix := ""
+				if unread {
+					prefix = "● "
+				}
+
 				var label string
 				if ci == m.channelSelectedIndex {
 					label = lipgloss.NewStyle().
 						Foreground(colYellow).
 						Background(colDarkGray).
+						Bold(unread).
 						Width(w).
 						MaxWidth(w).
-						Render("# " + entry.teamName + " » " + entry.channelName)
+						Render(prefix + "# " + entry.teamName + " » " + entry.channelName)
 				} else {
-					label = lipgloss.NewStyle().MaxWidth(w).Render(labelStr)
+					var textStyle lipgloss.Style
+					if isHidden {
+						textStyle = lipgloss.NewStyle().Foreground(colDimGray)
+					} else {
+						textStyle = lipgloss.NewStyle()
+					}
+					if unread {
+						textStyle = textStyle.Bold(true)
+					}
+
+					var icon string
+					if isHidden {
+						icon = lipgloss.NewStyle().Foreground(colDimGray).Render("#")
+					} else {
+						icon = lipgloss.NewStyle().Foreground(lipgloss.Color("#5F87FF")).Render("#")
+					}
+
+					labelStr := prefix + icon + " " + entry.teamName + " » " + entry.channelName
+					label = textStyle.MaxWidth(w).Render(labelStr)
 				}
 				lines = append(lines, label)
 			}
@@ -2838,6 +3066,21 @@ func (m Model) markRead() Model {
 	if !m.focused {
 		return m
 	}
+	if m.channelSelectedIndex >= 0 {
+		chans := m.allChannels()
+		if m.channelSelectedIndex < len(chans) {
+			entry := chans[m.channelSelectedIndex]
+			lastID := m.lastMsgID[entry.channelID]
+			if lastID == "" && len(m.app.Messages) > 0 {
+				lastID = m.app.Messages[0].ID
+			}
+			if lastID != "" && m.lastReadMsgID[entry.channelID] != lastID {
+				m.lastReadMsgID[entry.channelID] = lastID
+			}
+		}
+		return m
+	}
+
 	chat := m.app.GetSelectedChat()
 	if chat == nil {
 		return m
@@ -4695,6 +4938,7 @@ func (m Model) renderHelpPopup(w, h int) string {
 			{"c", "Open chat search / open chat"},
 			{"/", "Search message history"},
 			{"f", "Toggle favourite (chats only)"},
+			{"h", "Toggle hide/unhide channel (channels only)"},
 			{"n", "Cycle notification mode"},
 			{"ESC", "Enter sleep / idle mode (stop polling)"},
 			{"?", "Show this help"},

@@ -35,7 +35,7 @@ Authenticates via **OAuth2 Device Code Flow** (no browser redirect needed), fetc
   - **Terminal Image Preview** (`file_preview_in_terminal`) — Displays the highlighted image attachment directly inside the details popup on the right side using the Kitty Graphics Protocol (requires `file_preview_enabled: true`)
 - 🟢 **User Presence** (`presence_enabled`) — press `p` in message selection mode to see real-time availability of the message sender
 - 👤 **User Profile** (`user_profile_enabled`) — press `i` in message selection mode to view extended profile info (name, email, job title, department)
-- 🏢 **Teams Channels** (`teams_channels_enabled`) (**this feature is under development still**) — Teams channels appear in the main sidebar below your chats; navigate with `j`/`k` and read messages just like chats
+- 🏢 **Teams Channels** (`teams_channels_enabled`) — Teams channels appear in the main sidebar below your chats; navigate with `j`/`k` and read messages just like chats. Supports background polling, global activity sorting (most active unhidden channels on top), unread indicators, and user-toggleable hidden channels (press `h` to toggle).
 
 ---
 
@@ -137,6 +137,16 @@ Configure how many context messages (before and after each search match) to disp
   ```
   - `search_context_limit`: The number of context messages before and after each match to include (default: 3).
 
+### Channel Message Refresh
+Configure background refresh rate for unhidden channels (in minutes) in `~/.config/teams-tui-go/config.json`:
+
+  ```json
+  {
+    "channel_msg_refresh_min": 2
+  }
+  ```
+  - `channel_msg_refresh_min`: The background polling interval in minutes for unhidden channels (default: 2).
+
 ### Chat Icon Themes
 You can configure the style of chat type indicators in the sidebar using `~/.config/teams-tui-go/config.json`:
 
@@ -186,7 +196,7 @@ Each feature is disabled by default and requires an additional Graph API permiss
 | `presence_enabled` | `false` | `Presence.Read.All` | Press `p` in message selection mode to see sender availability |
 | `user_profile_enabled` | `false` | `User.ReadBasic.All` | Press `i` in message selection mode to view sender's profile |
 | `user_profile_extended` | `false` | `User.Read.All` *(admin consent)* | Adds job title, department, office to the profile popup (requires `user_profile_enabled: true`) |
-| `teams_channels_enabled` | `false` | `Team.ReadBasic.All` + `Channel.ReadBasic.All` + `ChannelMessage.Read.All` *(admin consent)* + `ChannelMessage.Send` + `ChannelMessage.ReadWrite` | Teams channels appear in the sidebar below chats; `j`/`k` to navigate, messages load in the right panel |
+| `teams_channels_enabled` | `false` | `Team.ReadBasic.All` + `Channel.ReadBasic.All` + `ChannelMessage.Read.All` *(admin consent)* + `ChannelMessage.Send` + `ChannelMessage.ReadWrite` | Teams channels appear in the sidebar below chats; navigate with `j`/`k`. Supports background polling, activity sorting, unread dots, and hidden channels (`h` key). |
 
 See [AZURE_SETUP.md](AZURE_SETUP.md) for full permission setup instructions.
 
@@ -280,6 +290,7 @@ When in compose mode (`i`), you can paste images (PNG/JPEG) directly from your s
 | `Esc`        | Clear active search, or enter sleep/idle mode (Normal Mode) |
 | `c`          | Open chat search / chat creation popup                    |
 | `f`          | Toggle ★ favourite on selected chat (chats only)          |
+| `h`          | Toggle hide/unhide on selected channel (channels only)    |
 | `i`          | Enter compose mode                                        |
 | `Ctrl+V`     | Paste image from clipboard (in Compose Mode)              |
 | `Enter`      | Send message                                              |

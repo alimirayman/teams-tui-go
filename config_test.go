@@ -61,6 +61,9 @@ func TestInitConfig(t *testing.T) {
 	if cfg.ChatLimit == nil || *cfg.ChatLimit != 50 {
 		t.Errorf("expected chat limit 50, got %v", cfg.ChatLimit)
 	}
+	if cfg.ChannelMsgRefreshMin == nil || *cfg.ChannelMsgRefreshMin != 2 {
+		t.Errorf("expected channel message refresh min 2, got %v", cfg.ChannelMsgRefreshMin)
+	}
 
 	// Case 2: Config exists but is missing some options (e.g. partial).
 	// We'll write a custom config with only ClientID and MessageLimit set, and others missing/nil.
@@ -109,6 +112,9 @@ func TestInitConfig(t *testing.T) {
 	}
 	if updatedCfg.ChatLimit == nil || *updatedCfg.ChatLimit != 50 {
 		t.Errorf("expected default chat limit 50, got %v", updatedCfg.ChatLimit)
+	}
+	if updatedCfg.ChannelMsgRefreshMin == nil || *updatedCfg.ChannelMsgRefreshMin != 2 {
+		t.Errorf("expected default channel message refresh min 2, got %v", updatedCfg.ChannelMsgRefreshMin)
 	}
 }
 

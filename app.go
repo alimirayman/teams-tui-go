@@ -164,6 +164,8 @@ type App struct {
 	SelectedChannelTeamID string // teamID of the currently viewed channel ("" = chat mode)
 	SelectedChannelID     string // channelID of the currently viewed channel ("" = chat mode)
 	ChannelReplyToID      string // root message ID when replying to a channel thread ("" = new root post)
+	ChannelMsgRefreshMin  int
+
 
 	// ── Help popup ───────────────────────────────────────────────────────
 	HelpPopupMode bool

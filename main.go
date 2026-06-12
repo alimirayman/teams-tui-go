@@ -496,6 +496,7 @@ func main() {
 	app.CurrentUserID = me.ID
 
 	// Load persisted notification mode and settings.
+	app.ChannelMsgRefreshMin = ResolveChannelMsgRefreshMin()
 	if cfg := LoadConfig(); cfg != nil {
 		if cfg.NotificationMode != nil {
 			app.NotificationMode = *cfg.NotificationMode
@@ -530,6 +531,7 @@ func main() {
 	// first tick-driven background refresh fires ~15 s from now rather than
 	// immediately (Init() no longer fires a redundant loadChatsCmd).
 	model.lastChatRefresh = time.Now()
+	model.lastChannelRefresh = time.Now()
 	model.latestChats = chats
 	model.lastMsgID = lastMsgIDs
 	model.lastMsgTime = lastMsgTimes
@@ -551,6 +553,8 @@ func main() {
 
 	// Load persisted favourites and apply them so favourites appear at the top on launch.
 	model.favourites = LoadFavourites()
+	model.unhiddenChannels = LoadUnhiddenChannels()
+
 
 	// Fetch any favourited chats that weren't returned by the regular API call
 	// (e.g. chats with very old activity that fell outside chat_limit).
