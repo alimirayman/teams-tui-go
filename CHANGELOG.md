@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.0.4] - 2026-06-13
+
+### Features
+
+- **Format URLs as clickable HTML links when sending messages** - ([d00b69a](https://github.com/nospor/teams-tui-go/commit/d00b69a3e01ebcfe9f3b304eb9de5feed22d6a3b))
+
+
+- **Highlight and prefix user mentions in messages** - ([36bc4fa](https://github.com/nospor/teams-tui-go/commit/36bc4fa05d18b6af4fb03751256d260e934049d9))
+
+
+- *(ui)* **Add scrolling and progress indicator to help popup** - ([515979f](https://github.com/nospor/teams-tui-go/commit/515979f30d51b773ce0cd0a108dc2d169ecae00a))
+
+
+- **Add user @mentions autocomplete in compose input** - ([cc939ae](https://github.com/nospor/teams-tui-go/commit/cc939ae001a5fa97117809d71a5394dda963e7ee))
+
+
+> - Triggers suggestions dropdown when typing `@` in compose textarea
+> - Supports scrollable dropdown navigation (Up/Down/Tab) for large group
+> chats/channels
+> - Autocompletes name on Enter on the same line (appends a trailing
+> space)
+> - Generates rich HTML `&lt;at>` tags and packs Graph API mentions payload
+> - Adds `channel_mentions_enabled` config key (requests
+> `TeamMember.Read.All` scope)
+
+
+- *(ui)* **Add scroll padding and persist channel scroll offset in sidebar** - ([e5924a4](https://github.com/nospor/teams-tui-go/commit/e5924a418b9eb8de43b15939c753f16a019d4d5b))
+
+
+> - Scroll the chat and channel lists 3 rows before hitting the top/bottom
+> boundary.
+> - Persist the channel list scroll offset in the App struct to prevent it
+> from resetting on render.
+> - Clamp scroll padding dynamically for small viewports to avoid
+> off-screen selections.
+
+
+
+### Other
+
+- **Merge branch 'main' of github.com:nospor/teams-tui-go** - ([74cfee6](https://github.com/nospor/teams-tui-go/commit/74cfee6b4bd1080d006092441f7980dfc39ca5e9))
+
+
+
+### Performance
+
+- *(channels)* **Restore cached messages instantly when switching channels** - ([76e2525](https://github.com/nospor/teams-tui-go/commit/76e25253a3a6b8fcb9aa2e30a40d672877a7e662))
+
+
+> Improve TUI responsiveness by pre-rendering cached channel messages
+> on selection change to avoid showing a blank loading screen. Fetch
+> fresh messages silently in the background immediately after.
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.0.3 [skip ci]** - ([0c4dfe3](https://github.com/nospor/teams-tui-go/commit/0c4dfe33c88c07c0599ea71f302e7f36003346e4))
+
+
+
 ## [1.0.3] - 2026-06-12
 
 ### Features
