@@ -595,10 +595,11 @@ func parseMentions(content string, members []ChatMember) (string, []map[string]a
 func formatMessageBody(content string, members []ChatMember) (map[string]any, []map[string]any) {
 	content = replaceEmoticons(content)
 
-	// Detect whether content needs HTML rendering (markdown or multi-line).
+	// Detect whether content needs HTML rendering (markdown, multi-line, or containing a URL).
 	hasMarkdown := containsMarkdown(content)
 	isMultiLine := strings.Contains(content, "\n")
 	isIndented := strings.HasPrefix(content, " ") || strings.HasPrefix(content, "\t")
+	hasURL := containsURL(content)
 
 	hasMentions := false
 	for _, m := range members {
@@ -610,16 +611,16 @@ func formatMessageBody(content string, members []ChatMember) (map[string]any, []
 		}
 	}
 
-	if !hasMarkdown && !isMultiLine && !isIndented && !hasMentions {
+	if !hasMarkdown && !isMultiLine && !isIndented && !hasMentions && !hasURL {
 		// Plain single-line text — send as-is.
 		return map[string]any{
 			"content": content,
 		}, nil
 	}
 
-	// Convert markdown (and handle multi-line) to Teams-compatible HTML.
+	// Convert markdown (and handle multi-line/URLs) to Teams-compatible HTML.
 	var htmlContent string
-	if hasMarkdown || isMultiLine || isIndented {
+	if hasMarkdown || isMultiLine || isIndented || hasURL {
 		htmlContent = markdownToHTML(content)
 	} else {
 		htmlContent = stdhtml.EscapeString(content)
@@ -641,7 +642,7 @@ func formatMessageBodyWithImages(content string, members []ChatMember, images []
 	}
 
 	var htmlContent string
-	if containsMarkdown(content) || strings.Contains(content, "\n") || strings.HasPrefix(content, " ") || strings.HasPrefix(content, "\t") {
+	if containsMarkdown(content) || strings.Contains(content, "\n") || strings.HasPrefix(content, " ") || strings.HasPrefix(content, "\t") || containsURL(content) {
 		htmlContent = markdownToHTML(content)
 	} else {
 		htmlContent = stdhtml.EscapeString(content)

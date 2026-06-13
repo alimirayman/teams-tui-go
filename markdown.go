@@ -24,7 +24,9 @@ var (
 			`|__(.+?)__` + // 3: __bold__
 			`|\*(.+?)\*` + // 4: *italic*
 			`|_(.+?)_` + // 5: _italic_
-			`|~~(.+?)~~`, // 6: ~~strikethrough~~
+			`|~~(.+?)~~` + // 6: ~~strikethrough~~
+			`|\[([^\]]+)\]\((https?://[^\s<>"\)]+)\)` + // 7: [text](url)
+			`|(https?://[a-zA-Z0-9\-._~:/?#\[\]@!$&'()*+,;%=]+)`, // 8: plain URL
 	)
 )
 
@@ -157,6 +159,14 @@ func inlineMarkdownToHTML(s string) string {
 			out.WriteString("<em>" + inlineMarkdownToHTML(s[m[10]:m[11]]) + "</em>")
 		case m[12] >= 0: // ~~strikethrough~~
 			out.WriteString("<s>" + inlineMarkdownToHTML(s[m[12]:m[13]]) + "</s>")
+		case m[14] >= 0: // [text](url)
+			linkText := s[m[14]:m[15]]
+			linkURL := s[m[16]:m[17]]
+			out.WriteString(`<a href="` + html.EscapeString(linkURL) + `">` + inlineMarkdownToHTML(linkText) + `</a>`)
+		case m[18] >= 0: // plain URL
+			u := s[m[18]:m[19]]
+			cleanURL, trailing := trimTrailingPunctuation(u)
+			out.WriteString(`<a href="` + html.EscapeString(cleanURL) + `">` + html.EscapeString(cleanURL) + `</a>` + html.EscapeString(trailing))
 		}
 	}
 
@@ -165,6 +175,42 @@ func inlineMarkdownToHTML(s string) string {
 		out.WriteString(html.EscapeString(s[lastIdx:]))
 	}
 	return out.String()
+}
+
+// trimTrailingPunctuation trims trailing punctuation that shouldn't be part of the URL.
+func trimTrailingPunctuation(urlStr string) (string, string) {
+	trailing := ""
+	for len(urlStr) > 0 {
+		last := urlStr[len(urlStr)-1]
+		if last == '.' || last == ',' || last == '!' || last == '?' || last == ';' || last == ':' || last == '*' || last == '\'' || last == '"' {
+			trailing = string(last) + trailing
+			urlStr = urlStr[:len(urlStr)-1]
+		} else if last == ')' {
+			// Only trim trailing ')' if there are no matching '(' in the URL.
+			if strings.Count(urlStr, "(") < strings.Count(urlStr, ")") {
+				trailing = ")" + trailing
+				urlStr = urlStr[:len(urlStr)-1]
+			} else {
+				break
+			}
+		} else if last == ']' {
+			// Only trim trailing ']' if there are no matching '[' in the URL.
+			if strings.Count(urlStr, "[") < strings.Count(urlStr, "]") {
+				trailing = "]" + trailing
+				urlStr = urlStr[:len(urlStr)-1]
+			} else {
+				break
+			}
+		} else {
+			break
+		}
+	}
+	return urlStr, trailing
+}
+
+// containsURL returns true if the string contains http:// or https://.
+func containsURL(s string) bool {
+	return strings.Contains(s, "http://") || strings.Contains(s, "https://")
 }
 
 // containsMarkdown returns true if s appears to contain markdown syntax.
