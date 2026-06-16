@@ -4646,9 +4646,9 @@ func (m *Model) notifyReaction(chat Chat, msg *Message, newReactions []MessageRe
 	}
 
 	for _, r := range newReactions {
-		reactorName := "Someone"
-		if r.User != nil && r.User.User != nil && r.User.User.DisplayName != nil {
-			reactorName = *r.User.User.DisplayName
+		reactorName := m.resolveReactorName(&chat, r)
+		if r.User != nil && r.User.User != nil && r.User.User.ID != nil && reactorName == *r.User.User.ID {
+			reactorName = "Someone"
 		}
 
 		emoji := reactionEmoji(r.ReactionType)
@@ -5198,7 +5198,7 @@ func (m Model) renderMessagePopup(w, h int) string {
 	for _, r := range msg.Reactions {
 		rType := strings.ToLower(r.ReactionType)
 		emoji := reactionEmoji(rType)
-		name := m.resolveReactorName(r)
+		name := m.resolveReactorName(nil, r)
 
 		reactionsGrouped[emoji] = append(reactionsGrouped[emoji], name)
 		if !seenReactions[emoji] {
@@ -5346,7 +5346,7 @@ func (m Model) renderMessagePopup(w, h int) string {
 	return box
 }
 
-func (m Model) resolveReactorName(r MessageReaction) string {
+func (m Model) resolveReactorName(chat *Chat, r MessageReaction) string {
 	if r.User == nil || r.User.User == nil {
 		return "Someone"
 	}
@@ -5365,6 +5365,21 @@ func (m Model) resolveReactorName(r MessageReaction) string {
 	}
 
 	if r.User.User.ID != nil && *r.User.User.ID != "" {
+		if chat != nil {
+			for _, member := range chat.Members {
+				match := false
+				if member.UserID != nil && *member.UserID == *r.User.User.ID {
+					match = true
+				} else if member.ID != nil && *member.ID == *r.User.User.ID {
+					match = true
+				}
+				if match {
+					if member.DisplayName != nil && *member.DisplayName != "" {
+						return *member.DisplayName
+					}
+				}
+			}
+		}
 		if ch := m.activeChannelEntry(); ch != nil {
 			for _, member := range m.app.TeamMembersCache[ch.teamID] {
 				match := false
@@ -5379,8 +5394,9 @@ func (m Model) resolveReactorName(r MessageReaction) string {
 					}
 				}
 			}
-		} else if chat := m.app.GetSelectedChat(); chat != nil {
-			for _, member := range chat.Members {
+		}
+		if selChat := m.app.GetSelectedChat(); selChat != nil {
+			for _, member := range selChat.Members {
 				match := false
 				if member.UserID != nil && *member.UserID == *r.User.User.ID {
 					match = true
