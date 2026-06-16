@@ -65,7 +65,9 @@ type Message struct {
 	Attachments     []MessageAttachment `json:"attachments,omitempty"`
 	Reactions       []MessageReaction   `json:"reactions,omitempty"`
 	Mentions        []MessageMention    `json:"mentions,omitempty"`
-	PlainTextCached *string             `json:"-"`
+	PlainTextCached         *string             `json:"-"`
+	NormalizedTextCached    *string             `json:"-"`
+	NormalizedSubjectCached *string             `json:"-"`
 	// IsReply is set in-process (not from JSON) for Teams channel thread replies.
 	IsReply   bool   `json:"-"`
 	ReplyToID string `json:"-"` // ID of the root message this is a reply to
@@ -100,6 +102,27 @@ func (msg *Message) GetPlainText() string {
 	text := HTMLToText(*msg.Body.Content, msg.Attachments, msg.Mentions)
 	msg.PlainTextCached = &text
 	return text
+}
+
+// GetNormalizedText returns the cached normalized plain text (lowercased, accents removed).
+func (msg *Message) GetNormalizedText() string {
+	if msg.NormalizedTextCached != nil {
+		return *msg.NormalizedTextCached
+	}
+	rawText := msg.GetPlainText()
+	normText := normalizeString(strings.ToLower(rawText))
+	msg.NormalizedTextCached = &normText
+	return normText
+}
+
+// GetNormalizedSubject returns the cached normalized subject (lowercased, accents removed).
+func (msg *Message) GetNormalizedSubject() string {
+	if msg.NormalizedSubjectCached != nil {
+		return *msg.NormalizedSubjectCached
+	}
+	normSubj := normalizeString(strings.ToLower(msg.Subject))
+	msg.NormalizedSubjectCached = &normSubj
+	return normSubj
 }
 
 func hasExtension(s string) bool {

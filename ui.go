@@ -67,10 +67,10 @@ type MsgMessagesLoaded struct {
 
 // MsgMoreMessagesLoaded is sent when older messages are loaded via pagination.
 type MsgMoreMessagesLoaded struct {
-	ChatIndex int
-	Messages  []Message
-	NextLink  string
-	IsSearch  bool
+	ConversationID string
+	Messages       []Message
+	NextLink       string
+	IsSearch       bool
 }
 
 // MsgTick is the heartbeat used for periodic refresh and bell timeout.
@@ -91,6 +91,13 @@ type MsgEditDone struct {
 type MsgUserSearchDone struct {
 	Users []User
 	Err   error
+}
+
+// MsgHistoryLoaded is sent when the SQLite message history load completes.
+type MsgHistoryLoaded struct {
+	ConversationID string
+	Messages       []Message
+	NextLink       string
 }
 
 // MsgCreateChatDone is sent when a chat creation/retrieval completes.
@@ -899,24 +906,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── More messages loaded (pagination) ───────────────────────────────
 	case MsgMoreMessagesLoaded:
-		if msg.ChatIndex != m.app.SelectedIndex {
+		convID := m.activeConversationID()
+		if msg.ConversationID != convID || convID == "" {
 			break
 		}
 
-		chat := m.app.GetSelectedChat()
-		if chat != nil && msg.IsSearch {
+		if msg.IsSearch {
 			m.app.SetSearchLoadingMessages(false)
 
 			// Update history messages cache directly
-			m.app.HistoryMessages[chat.ID] = mergeHistoryMessages(m.app.HistoryMessages[chat.ID], msg.Messages)
-			hist := m.app.HistoryMessages[chat.ID]
-			m.app.HistoryNextLink[chat.ID] = msg.NextLink
+			m.app.HistoryMessages[convID] = mergeHistoryMessages(m.app.HistoryMessages[convID], msg.Messages)
+			hist := m.app.HistoryMessages[convID]
+			m.app.HistoryNextLink[convID] = msg.NextLink
 
 			// Save newly loaded search messages and next link to SQLite!
 			if m.app.Features.SqliteEnabled {
-				go SaveMessages(chat.ID, msg.Messages)
+				go SaveMessages(convID, msg.Messages)
 				if msg.NextLink != "" {
-					go SaveNextLink(chat.ID, msg.NextLink)
+					go SaveNextLink(convID, msg.NextLink)
 				}
 			}
 
@@ -928,16 +935,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if msg.NextLink != "" {
 					m.app.SetSearchLoadingMessages(true)
 					m.app.SetSearchStatus(fmt.Sprintf("Searching all history for '%s'... Loaded %d messages", m.app.SearchQuery, len(hist)), 0)
-					cmds = append(cmds, loadMoreMessagesCmd(m.clientID, msg.NextLink, m.app.SelectedIndex, true))
+					cmds = append(cmds, loadMoreMessagesCmd(m.clientID, msg.NextLink, convID, true))
 				} else {
 					m.app.SetSearchStatus(fmt.Sprintf("Search finished. Loaded all %d messages in history.", len(hist)), 5*time.Second)
 				}
 			} else {
-				// Silently continue loading next page in background so history is ready
-				if msg.NextLink != "" {
-					m.app.SetSearchLoadingMessages(true)
-					cmds = append(cmds, loadMoreMessagesCmd(m.clientID, msg.NextLink, m.app.SelectedIndex, true))
-				}
+				// Search popup is closed, stop loading!
+				m.app.SetSearchLoadingMessages(false)
 			}
 		} else {
 			// Standard main chat scroll pagination
@@ -947,28 +951,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.app.AppendOlderMessages(msg.Messages, msg.NextLink)
 			m.updateScroll()
 			// Update the per-chat cache with the newly paginated messages.
-			var conversationID string
-			if m.channelSelectedIndex >= 0 {
-				conversationID = m.app.SelectedChannelID
-			} else if chat != nil {
-				conversationID = chat.ID
-			}
-			if conversationID != "" {
-				m.app.CachedMessages[conversationID] = m.app.Messages
-				m.app.CachedNextLink[conversationID] = msg.NextLink
+			m.app.CachedMessages[convID] = m.app.Messages
+			m.app.CachedNextLink[convID] = msg.NextLink
+			if m.app.Features.SqliteEnabled {
+				go SaveMessages(convID, msg.Messages)
+				if msg.NextLink != "" {
+					go SaveNextLink(convID, msg.NextLink)
+				}
 			}
 		}
 
-		var conversationID string
-		if m.channelSelectedIndex >= 0 {
-			conversationID = m.app.SelectedChannelID
-		} else if chat != nil {
-			conversationID = chat.ID
-		}
-		if conversationID != "" && m.app.Features.SqliteEnabled {
-			go SaveMessages(conversationID, msg.Messages)
-			if msg.NextLink != "" {
-				go SaveNextLink(conversationID, msg.NextLink)
+	case MsgHistoryLoaded:
+		convID := m.activeConversationID()
+		if msg.ConversationID == convID && convID != "" {
+			m.app.SetSearchLoadingMessages(false)
+			m.app.SetSearchStatus("", 0)
+
+			existingIDs := make(map[string]bool)
+			for _, mObj := range msg.Messages {
+				existingIDs[mObj.ID] = true
+			}
+			var toAdd []Message
+			for _, mainM := range m.app.Messages {
+				if !existingIDs[mainM.ID] {
+					toAdd = append(toAdd, mainM)
+				}
+			}
+			m.app.HistoryMessages[convID] = mergeHistoryMessages(msg.Messages, toAdd)
+			m.app.HistoryNextLink[convID] = msg.NextLink
+			m.app.HistoryInitialized[convID] = true
+
+			if m.app.SearchQuery != "" {
+				m.RebuildSearchPopupResults()
+				m.saveSearchState()
+			}
+		} else {
+			if msg.ConversationID != "" {
+				m.app.HistoryMessages[msg.ConversationID] = msg.Messages
+				m.app.HistoryNextLink[msg.ConversationID] = msg.NextLink
+				m.app.HistoryInitialized[msg.ConversationID] = true
 			}
 		}
 
@@ -1515,37 +1536,38 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.app.MainChatSnapToBottom = m.app.SnapToBottom
 		m.app.SearchPopupMode = true
 		m.app.SearchMode = true
-		chat := m.app.GetSelectedChat()
-		if chat != nil {
-			hist := m.app.HistoryMessages[chat.ID]
-			if m.app.Features.SqliteEnabled && !m.app.HistoryInitialized[chat.ID] {
-				dbMsgs, err := GetStoredMessages(chat.ID, 10000)
-				if err == nil && len(dbMsgs) > 0 {
-					hist = dbMsgs
-					nextLink, _ := GetNextLink(chat.ID)
-					m.app.HistoryNextLink[chat.ID] = nextLink
-					m.app.HistoryInitialized[chat.ID] = true
+		convID := m.activeConversationID()
+		var initCmd tea.Cmd
+		if convID != "" {
+			if m.app.Features.SqliteEnabled && !m.app.HistoryInitialized[convID] {
+				m.app.SetSearchLoadingMessages(true)
+				m.app.SetSearchStatus("Loading history from database...", 0)
+				initCmd = loadHistoryFromDBCmd(convID)
+			} else {
+				hist := m.app.HistoryMessages[convID]
+				existingIDs := make(map[string]bool)
+				for _, mObj := range hist {
+					existingIDs[mObj.ID] = true
 				}
-			}
-			existingIDs := make(map[string]bool)
-			for _, mObj := range hist {
-				existingIDs[mObj.ID] = true
-			}
-			var toAdd []Message
-			for _, mainM := range m.app.Messages {
-				if !existingIDs[mainM.ID] {
-					toAdd = append(toAdd, mainM)
+				var toAdd []Message
+				for _, mainM := range m.app.Messages {
+					if !existingIDs[mainM.ID] {
+						toAdd = append(toAdd, mainM)
+					}
 				}
-			}
-			m.app.HistoryMessages[chat.ID] = mergeHistoryMessages(hist, toAdd)
-			if !m.app.HistoryInitialized[chat.ID] {
-				m.app.HistoryNextLink[chat.ID] = m.app.NextLink
-				m.app.HistoryInitialized[chat.ID] = true
+				m.app.HistoryMessages[convID] = mergeHistoryMessages(hist, toAdd)
+				if !m.app.HistoryInitialized[convID] {
+					m.app.HistoryNextLink[convID] = m.app.NextLink
+					m.app.HistoryInitialized[convID] = true
+				}
 			}
 		}
 		m.loadSearchState()
 		m.searchInput.SetValue(m.app.SearchQuery)
 		m.searchInput.Focus()
+		if initCmd != nil {
+			return m, tea.Batch(textinput.Blink, initCmd)
+		}
 		return m, textinput.Blink
 
 	case "esc":
@@ -1570,7 +1592,7 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		if m.app.ScrollOffset == 0 && m.app.NextLink != "" && !m.app.LoadingMessages {
 			m.app.SetLoadingMessages(true)
-			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.app.SelectedIndex, false)
+			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.activeConversationID(), false)
 		}
 		m.app.ScrollOffset -= 10
 		if m.app.ScrollOffset < 0 {
@@ -1878,8 +1900,8 @@ func (m Model) handleSearchModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.app.SearchActive = true
 		m.app.SearchQuery = query
 
-		chat := m.app.GetSelectedChat()
-		if chat != nil {
+		convID := m.activeConversationID()
+		if convID != "" {
 			// Clear previous search query results to start fresh
 			m.app.SearchPopupResults = nil
 			m.app.SearchPopupSelectedIndex = 0
@@ -1889,12 +1911,18 @@ func (m Model) handleSearchModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 			// Start the background API fetch loop to load missing messages from the API
 			// if we haven't loaded all history yet (nextLink is not empty).
-			nextLink := m.app.HistoryNextLink[chat.ID]
+			nextLink := m.app.HistoryNextLink[convID]
 			if nextLink != "" {
-				m.app.SetSearchLoadingMessages(true)
-				m.app.SetSearchStatus(fmt.Sprintf("Searching all history for '%s'... Loaded %d messages", query, len(m.app.HistoryMessages[chat.ID])), 0)
-				m.saveSearchState()
-				return m, loadMoreMessagesCmd(m.clientID, nextLink, m.app.SelectedIndex, true)
+				if !m.app.SearchLoadingMessages {
+					m.app.SetSearchLoadingMessages(true)
+					m.app.SetSearchStatus(fmt.Sprintf("Searching all history for '%s'... Loaded %d messages", query, len(m.app.HistoryMessages[convID])), 0)
+					m.saveSearchState()
+					return m, loadMoreMessagesCmd(m.clientID, nextLink, convID, true)
+				} else {
+					m.app.SetSearchStatus(fmt.Sprintf("Searching all history for '%s'... (already loading background pages)", query), 0)
+					m.saveSearchState()
+					return m, nil
+				}
 			}
 		}
 
@@ -1998,7 +2026,7 @@ func (m Model) handleMessagePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.app.SetLoadingMessages(true)
 			m.app.MessagePopupScrollOffset = 0
 			return m, tea.Batch(
-				loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.app.SelectedIndex, false),
+				loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.activeConversationID(), false),
 				clearKittyImagesCmd(),
 			)
 		}
@@ -2032,7 +2060,7 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		} else if m.app.NextLink != "" && !m.app.LoadingMessages {
 			// Already at the oldest loaded message — fetch the next page.
 			m.app.SetLoadingMessages(true)
-			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.app.SelectedIndex, false)
+			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.activeConversationID(), false)
 		}
 
 	case "r":
@@ -2780,6 +2808,20 @@ func (m Model) activeChannelEntry() *channelEntry {
 	}
 	e := chans[m.channelSelectedIndex]
 	return &e
+}
+
+// activeConversationID returns the active chat ID or channel ID, or "" if none.
+func (m Model) activeConversationID() string {
+	if m.channelSelectedIndex >= 0 {
+		if entry := m.activeChannelEntry(); entry != nil {
+			return entry.channelID
+		}
+		return m.app.SelectedChannelID
+	}
+	if chat := m.app.GetSelectedChat(); chat != nil {
+		return chat.ID
+	}
+	return ""
 }
 
 func (m Model) renderChatList(w, h int) string {
@@ -3788,13 +3830,12 @@ func (m Model) messageMatches(msg *Message, query string) bool {
 	normQuery := normalizeString(strings.TrimSpace(strings.ToLower(query)))
 
 	// Check subject
-	if msg.Subject != "" && strings.Contains(normalizeString(strings.ToLower(msg.Subject)), normQuery) {
+	if msg.Subject != "" && strings.Contains(msg.GetNormalizedSubject(), normQuery) {
 		return true
 	}
 
 	// Check body
-	text := msg.GetPlainText()
-	if strings.Contains(normalizeString(strings.ToLower(text)), normQuery) {
+	if strings.Contains(msg.GetNormalizedText(), normQuery) {
 		return true
 	}
 
@@ -3952,13 +3993,13 @@ func (m *Model) RebuildSearchPopupResults() {
 		return
 	}
 
-	chat := m.app.GetSelectedChat()
-	if chat == nil {
+	convID := m.activeConversationID()
+	if convID == "" {
 		return
 	}
 
-	// Retrieve all loaded messages for this chat so far
-	history, ok := m.app.HistoryMessages[chat.ID]
+	// Retrieve all loaded messages for this conversation so far
+	history, ok := m.app.HistoryMessages[convID]
 	if !ok || len(history) == 0 {
 		m.app.SearchPopupResults = nil
 		m.app.SearchPopupSelectedIndex = 0
@@ -4009,8 +4050,8 @@ func (m *Model) RebuildSearchPopupResults() {
 		}
 	}
 
-	// Merge expanded indices for this chat
-	if state, ok := m.app.SearchStates[chat.ID]; ok && state.ExpandedIndices != nil {
+	// Merge expanded indices for this conversation
+	if state, ok := m.app.SearchStates[convID]; ok && state.ExpandedIndices != nil {
 		for idx := range state.ExpandedIndices {
 			if idx >= 0 && idx < len(history) {
 				includedIndices[idx] = true
@@ -4091,15 +4132,26 @@ func (m *Model) RebuildSearchPopupResults() {
 
 // renderSearchPopup draws the beautiful search interface modal on top of screen.
 func (m Model) renderSearchPopup(w, h int) string {
-	chat := m.app.GetSelectedChat()
-	if chat == nil {
-		return ""
+	var displayName string
+	if m.channelSelectedIndex >= 0 {
+		if entry := m.activeChannelEntry(); entry != nil {
+			displayName = entry.teamName + " » " + entry.channelName
+		} else {
+			displayName = "Channel"
+		}
+	} else {
+		chat := m.app.GetSelectedChat()
+		if chat != nil && chat.CachedDisplayName != nil {
+			displayName = *chat.CachedDisplayName
+		} else {
+			displayName = "Chat"
+		}
 	}
 
 	titleStyle := lipgloss.NewStyle().Foreground(colYellow).Bold(true)
 	titleText := "Search History (Enter to search)"
 	if m.app.SearchQuery != "" {
-		titleText = fmt.Sprintf("Search History: %s | Results for '%s'", *chat.CachedDisplayName, m.app.SearchQuery)
+		titleText = fmt.Sprintf("Search History: %s | Results for '%s'", displayName, m.app.SearchQuery)
 	}
 	title := titleStyle.Render(titleText)
 
@@ -4346,6 +4398,7 @@ func (m Model) handleSearchPopupNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "esc", "q":
 		m.app.SearchPopupMode = false
 		m.app.SearchMode = false
+		m.app.SetSearchLoadingMessages(false)
 		m.saveSearchState()
 		m.app.ScrollOffset = m.app.MainChatScrollOffset
 		m.app.SnapToBottom = m.app.MainChatSnapToBottom
@@ -4363,14 +4416,14 @@ func (m Model) handleSearchPopupNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.app.SearchPopupSelectedIndex--
 		} else {
 			// At the top of the search results list (oldest match currently loaded)
-			chat := m.app.GetSelectedChat()
-			if chat != nil {
-				nextLink := m.app.HistoryNextLink[chat.ID]
+			convID := m.activeConversationID()
+			if convID != "" {
+				nextLink := m.app.HistoryNextLink[convID]
 				if nextLink != "" && !m.app.SearchLoadingMessages {
 					m.app.SetSearchLoadingMessages(true)
 					m.app.SetSearchStatus(fmt.Sprintf("Loading older messages for '%s'...", m.app.SearchQuery), 0)
 					m.saveSearchState()
-					return m, loadMoreMessagesCmd(m.clientID, nextLink, m.app.SelectedIndex, true)
+					return m, loadMoreMessagesCmd(m.clientID, nextLink, convID, true)
 				}
 			}
 		}
@@ -4398,21 +4451,21 @@ func (m Model) handleSearchPopupNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "o", "enter":
 		if len(m.app.SearchPopupResults) > 0 && m.app.SearchPopupSelectedIndex < len(m.app.SearchPopupResults) {
 			item := m.app.SearchPopupResults[m.app.SearchPopupSelectedIndex]
-			chat := m.app.GetSelectedChat()
-			if chat != nil {
-				state, ok := m.app.SearchStates[chat.ID]
+			convID := m.activeConversationID()
+			if convID != "" {
+				state, ok := m.app.SearchStates[convID]
 				if !ok {
 					state = &ChatSearchState{
 						ExpandedIndices: make(map[int]bool),
 					}
-					m.app.SearchStates[chat.ID] = state
+					m.app.SearchStates[convID] = state
 				}
 				if state.ExpandedIndices == nil {
 					state.ExpandedIndices = make(map[int]bool)
 				}
 
 				idx := item.HistoryIndex
-				history := m.app.HistoryMessages[chat.ID]
+				history := m.app.HistoryMessages[convID]
 				for j := 1; j <= 5; j++ {
 					if idx+j < len(history) {
 						state.ExpandedIndices[idx+j] = true
@@ -4452,18 +4505,18 @@ func (m Model) handleSearchPopupNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// saveSearchState stores the current chat's active search state to the per-chat SearchStates map.
+// saveSearchState stores the current conversation's active search state to the SearchStates map.
 func (m *Model) saveSearchState() {
-	chat := m.app.GetSelectedChat()
-	if chat == nil {
+	convID := m.activeConversationID()
+	if convID == "" {
 		return
 	}
-	state, ok := m.app.SearchStates[chat.ID]
+	state, ok := m.app.SearchStates[convID]
 	if !ok {
 		state = &ChatSearchState{
 			ExpandedIndices: make(map[int]bool),
 		}
-		m.app.SearchStates[chat.ID] = state
+		m.app.SearchStates[convID] = state
 	}
 	if state.ExpandedIndices == nil {
 		state.ExpandedIndices = make(map[int]bool)
@@ -4474,13 +4527,13 @@ func (m *Model) saveSearchState() {
 	state.ScrollOffset = m.app.SearchPopupScrollOffset
 }
 
-// loadSearchState restores the search state for the selected chat into active fields.
+// loadSearchState restores the search state for the selected conversation into active fields.
 func (m *Model) loadSearchState() {
-	chat := m.app.GetSelectedChat()
-	if chat == nil {
+	convID := m.activeConversationID()
+	if convID == "" {
 		return
 	}
-	state, ok := m.app.SearchStates[chat.ID]
+	state, ok := m.app.SearchStates[convID]
 	if !ok {
 		m.app.SearchQuery = ""
 		m.app.SearchPopupResults = nil
@@ -5289,7 +5342,21 @@ func (m Model) resolveReactorName(r MessageReaction) string {
 	}
 
 	if r.User.User.ID != nil && *r.User.User.ID != "" {
-		if chat := m.app.GetSelectedChat(); chat != nil {
+		if ch := m.activeChannelEntry(); ch != nil {
+			for _, member := range m.app.TeamMembersCache[ch.teamID] {
+				match := false
+				if member.UserID != nil && *member.UserID == *r.User.User.ID {
+					match = true
+				} else if member.ID != nil && *member.ID == *r.User.User.ID {
+					match = true
+				}
+				if match {
+					if member.DisplayName != nil && *member.DisplayName != "" {
+						return *member.DisplayName
+					}
+				}
+			}
+		} else if chat := m.app.GetSelectedChat(); chat != nil {
 			for _, member := range chat.Members {
 				match := false
 				if member.UserID != nil && *member.UserID == *r.User.User.ID {

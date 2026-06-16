@@ -103,7 +103,7 @@ func loadMessagesCmd(clientID, chatID string, chatIndex int) tea.Cmd {
 }
 
 // loadMoreMessagesCmd fetches the next page of messages using a nextLink.
-func loadMoreMessagesCmd(clientID, nextLink string, chatIndex int, isSearch bool) tea.Cmd {
+func loadMoreMessagesCmd(clientID, nextLink string, conversationID string, isSearch bool) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
@@ -113,7 +113,7 @@ func loadMoreMessagesCmd(clientID, nextLink string, chatIndex int, isSearch bool
 		if err != nil {
 			return nil
 		}
-		return MsgMoreMessagesLoaded{ChatIndex: chatIndex, Messages: msgs, NextLink: next, IsSearch: isSearch}
+		return MsgMoreMessagesLoaded{ConversationID: conversationID, Messages: msgs, NextLink: next, IsSearch: isSearch}
 	}
 }
 
@@ -126,6 +126,22 @@ func searchUsersCmd(clientID, query string) tea.Cmd {
 		}
 		users, err := SearchUsers(token, query)
 		return MsgUserSearchDone{Users: users, Err: err}
+	}
+}
+
+// loadHistoryFromDBCmd loads conversation history from the SQLite database asynchronously.
+func loadHistoryFromDBCmd(convID string) tea.Cmd {
+	return func() tea.Msg {
+		dbMsgs, err := GetStoredMessages(convID, 10000)
+		if err != nil {
+			return MsgHistoryLoaded{ConversationID: convID}
+		}
+		nextLink, _ := GetNextLink(convID)
+		return MsgHistoryLoaded{
+			ConversationID: convID,
+			Messages:       dbMsgs,
+			NextLink:       nextLink,
+		}
 	}
 }
 
