@@ -3153,6 +3153,19 @@ func (m Model) renderMessages(w, h int) string {
 			body = highlightQuery(body, m.app.SearchQuery)
 		}
 
+		if msg.Subject != "" {
+			subjText := msg.Subject
+			if m.app.SearchActive && m.app.SearchQuery != "" {
+				subjText = highlightQuery(subjText, m.app.SearchQuery)
+			}
+			subjStyled := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Render(subjText)
+			if body != "" {
+				body = subjStyled + "\n" + body
+			} else {
+				body = subjStyled
+			}
+		}
+
 		// Add reactions.
 		reactionsStr := renderReactions(msg.Reactions)
 		if reactionsStr != "" {
@@ -3767,12 +3780,17 @@ func (m *Model) notify(senderName string, msg Message) {
 	}
 }
 
-// messageMatches reports whether the given message contains the case-insensitive query in its body or attachment names.
+// messageMatches reports whether the given message contains the case-insensitive query in its body, subject, or attachment names.
 func (m Model) messageMatches(msg *Message, query string) bool {
 	if query == "" {
 		return true
 	}
 	normQuery := normalizeString(strings.TrimSpace(strings.ToLower(query)))
+
+	// Check subject
+	if msg.Subject != "" && strings.Contains(normalizeString(strings.ToLower(msg.Subject)), normQuery) {
+		return true
+	}
 
 	// Check body
 	text := msg.GetPlainText()
@@ -4127,6 +4145,17 @@ func (m Model) renderSearchPopup(w, h int) string {
 				if item.IsMatch {
 					body = highlightQuery(body, m.app.SearchQuery)
 				}
+				if item.Message.Subject != "" {
+					subjText := item.Message.Subject
+					if item.IsMatch {
+						subjText = highlightQuery(subjText, m.app.SearchQuery)
+					}
+					if body != "" {
+						body = subjText + "\n" + body
+					} else {
+						body = subjText
+					}
+				}
 				bodyW := w - 8
 				if bodyW < 10 {
 					bodyW = 10
@@ -4219,6 +4248,19 @@ func (m Model) renderSearchPopup(w, h int) string {
 			body := item.Message.GetPlainText()
 			if item.IsMatch {
 				body = highlightQuery(body, m.app.SearchQuery)
+			}
+
+			if item.Message.Subject != "" {
+				subjText := item.Message.Subject
+				if item.IsMatch {
+					subjText = highlightQuery(subjText, m.app.SearchQuery)
+				}
+				subjStyled := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Render(subjText)
+				if body != "" {
+					body = subjStyled + "\n" + body
+				} else {
+					body = subjStyled
+				}
 			}
 
 			// Wrap body lines
@@ -5031,8 +5073,11 @@ func (m Model) renderMessagePopup(w, h int) string {
 	headerLines := []string{
 		lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("From: ") + sender,
 		lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("Date: ") + timeStr,
-		"",
 	}
+	if msg.Subject != "" {
+		headerLines = append(headerLines, lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("Subject: ") + msg.Subject)
+	}
+	headerLines = append(headerLines, "")
 
 	attachmentsLines := []string{}
 	if len(msg.Attachments) > 0 {

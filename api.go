@@ -59,6 +59,7 @@ type Message struct {
 	ID              string              `json:"id"`
 	CreatedDateTime string              `json:"createdDateTime"`
 	MessageType     string              `json:"messageType,omitempty"`
+	Subject         string              `json:"subject,omitempty"`
 	From            *MessageFrom        `json:"from,omitempty"`
 	Body            *MessageBody        `json:"body,omitempty"`
 	Attachments     []MessageAttachment `json:"attachments,omitempty"`
