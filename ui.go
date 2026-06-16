@@ -3059,6 +3059,13 @@ func (m Model) renderMessages(w, h int) string {
 		msg := msgs[i]
 		m.app.MessageLineOffsets[i] = len(lines)
 
+		alignRight := false
+		if m.channelSelectedIndex >= 0 {
+			alignRight = msg.IsReply
+		} else {
+			alignRight = m.isOwn(msg)
+		}
+
 		if m.app.PendingScrollID != "" && msg.ID == m.app.PendingScrollID {
 			pendingScrollLine = len(lines)
 		}
@@ -3089,36 +3096,45 @@ func (m Model) renderMessages(w, h int) string {
 				dateStr = msgTime.Format("Jan 02 15:04")
 			}
 			var header string
+			senderName := sender
+			if m.isOwn(msg) {
+				senderName = "Me"
+			}
+			if m.app.SearchActive && m.app.SearchQuery != "" {
+				senderName = highlightQuery(senderName, m.app.SearchQuery)
+			}
+
 			if msg.IsReply {
-				// Reply: indent with ↳ prefix, dimmer colour.
-				replyPrefix := lipgloss.NewStyle().Foreground(colDimGray).Render("  ↳ ")
-				if m.isOwn(msg) {
-					senderName := "Me"
-					if m.app.SearchActive && m.app.SearchQuery != "" {
-						senderName = highlightQuery(senderName, m.app.SearchQuery)
+				if alignRight {
+					// Right-aligned reply.
+					color := lipgloss.Color("#5F87AF") // others reply color (blueish)
+					if m.isOwn(msg) {
+						color = lipgloss.Color("#5FAF87") // own reply color (greenish)
 					}
-					h := lipgloss.NewStyle().Foreground(lipgloss.Color("#5FAF87")).Render(dateStr + " " + senderName + " ↳")
+					h := lipgloss.NewStyle().Foreground(color).Render(dateStr + " " + senderName + " ↳")
 					header = padLeft(h, w)
 				} else {
-					senderName := sender
-					if m.app.SearchActive && m.app.SearchQuery != "" {
-						senderName = highlightQuery(senderName, m.app.SearchQuery)
+					// Left-aligned reply.
+					color := lipgloss.Color("#5F87AF") // others reply color (blueish)
+					if m.isOwn(msg) {
+						color = lipgloss.Color("#5FAF87") // own reply color (greenish)
 					}
-					header = replyPrefix + lipgloss.NewStyle().Foreground(lipgloss.Color("#5F87AF")).Render(senderName+" "+dateStr)
+					replyPrefix := lipgloss.NewStyle().Foreground(colDimGray).Render("  ↳ ")
+					header = replyPrefix + lipgloss.NewStyle().Foreground(color).Render(senderName + " " + dateStr)
 				}
-			} else if m.isOwn(msg) {
-				senderName := "Me"
-				if m.app.SearchActive && m.app.SearchQuery != "" {
-					senderName = highlightQuery(senderName, m.app.SearchQuery)
-				}
-				h := lipgloss.NewStyle().Foreground(colGreen).Render(dateStr + " " + senderName)
-				header = padLeft(h, w)
 			} else {
-				senderName := sender
-				if m.app.SearchActive && m.app.SearchQuery != "" {
-					senderName = highlightQuery(senderName, m.app.SearchQuery)
+				if alignRight {
+					// Right-aligned main thread message.
+					h := lipgloss.NewStyle().Foreground(colGreen).Render(dateStr + " " + senderName)
+					header = padLeft(h, w)
+				} else {
+					// Left-aligned main thread message.
+					color := colCyan
+					if m.isOwn(msg) {
+						color = colGreen
+					}
+					header = lipgloss.NewStyle().Foreground(color).Render(senderName + " " + dateStr)
 				}
-				header = lipgloss.NewStyle().Foreground(colCyan).Render(senderName + " " + dateStr)
 			}
 			lines = append(lines, header)
 		}
@@ -3147,15 +3163,16 @@ func (m Model) renderMessages(w, h int) string {
 			}
 		}
 
-		// Replies from others are left-indented; own messages (including own replies) are right-padded.
+		// Replies from others (or replies in chats when not ours) are left-indented.
+		// In channels, replies are always right-aligned, so they do not have left indentation.
 		replyIndent := ""
-		if msg.IsReply && !m.isOwn(msg) {
+		if msg.IsReply && !alignRight {
 			replyIndent = "    " // 4 spaces aligning under "↳ "
 		}
 
 		msgLines := wordWrap(body, maxW-len(replyIndent))
 		padding := 0
-		if m.isOwn(msg) {
+		if alignRight {
 			maxMsgW := 0
 			for _, l := range msgLines {
 				lw := lipgloss.Width(l)
