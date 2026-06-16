@@ -171,8 +171,8 @@ Enable in config:
 
 Effect: Enables mentioning people inside Teams Channels. Type `@` in a channel message input to show a dropdown list of team members, search/select one, and post the message with a native Teams mention notification.
 
-| Permission | Type | Admin Consent | Purpose |
-|------------|------|---------------|---------|
+| Permission            | Type      | Admin Consent   | Purpose                                                                |
+| --------------------- | --------- | --------------- | ---------------------------------------------------------------------- |
 | `TeamMember.Read.All` | Delegated | May be required | Retrieve the list of team/channel members for autocomplete suggestions |
 
 ---

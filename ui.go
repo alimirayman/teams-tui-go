@@ -578,6 +578,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							m.lastReadReactions[c.ID][getReactionKey(c.LastMessagePreview.ID, r)] = true
 						}
 					}
+					// Update caches and SQLite DB immediately with the new reaction on LastMessagePreview
+					m = m.updateCachedMessages(c.ID, []Message{*c.LastMessagePreview})
 				}
 			} else {
 				for _, rKey := range m.getReactionKeys(c.LastMessagePreview) {
@@ -649,10 +651,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.reactionsInitialized[msg.ChatID] = true
-		m.app.HistoryMessages[msg.ChatID] = mergeHistoryMessages(m.app.HistoryMessages[msg.ChatID], msg.Messages)
-		if m.app.Features.SqliteEnabled {
-			go SaveMessages(msg.ChatID, msg.Messages)
-		}
+		m = m.updateCachedMessages(msg.ChatID, msg.Messages)
 
 		if len(newReactions) > 0 {
 			m.promoteChat(msg.ChatID)
@@ -704,10 +703,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.reactionsInitialized[chatID] = true
-			m.app.HistoryMessages[chatID] = mergeHistoryMessages(m.app.HistoryMessages[chatID], msgs)
-			if m.app.Features.SqliteEnabled {
-				go SaveMessages(chatID, msgs)
-			}
+			m = m.updateCachedMessages(chatID, msgs)
 
 			if len(newReactions) > 0 {
 				m.promoteChat(chatID)
@@ -817,25 +813,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Keep history cache in sync with new incoming messages
 			if chat != nil {
 				if hist, ok := m.app.HistoryMessages[chat.ID]; ok && len(hist) > 0 {
-					var toPrepend []Message
-					for _, newMsg := range msg.Messages {
-						found := false
-						for _, oldMsg := range hist {
-							if oldMsg.ID == newMsg.ID {
-								found = true
-								break
-							}
-						}
-						if !found {
-							toPrepend = append(toPrepend, newMsg)
-						}
-					}
-					if len(toPrepend) > 0 {
-						m.app.HistoryMessages[chat.ID] = mergeHistoryMessages(hist, toPrepend)
-						if m.app.SearchPopupMode {
-							m.RebuildSearchPopupResults()
-							m.saveSearchState()
-						}
+					m.app.HistoryMessages[chat.ID] = mergeHistoryMessages(hist, msg.Messages)
+					if m.app.SearchPopupMode {
+						m.RebuildSearchPopupResults()
+						m.saveSearchState()
 					}
 				}
 			}
@@ -1258,25 +1239,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Keep history cache in sync with new incoming messages
 			if msg.ChannelID != "" {
 				if hist, ok := m.app.HistoryMessages[msg.ChannelID]; ok && len(hist) > 0 {
-					var toPrepend []Message
-					for _, newMsg := range msg.Messages {
-						found := false
-						for _, oldMsg := range hist {
-							if oldMsg.ID == newMsg.ID {
-								found = true
-								break
-							}
-						}
-						if !found {
-							toPrepend = append(toPrepend, newMsg)
-						}
-					}
-					if len(toPrepend) > 0 {
-						m.app.HistoryMessages[msg.ChannelID] = mergeHistoryMessages(hist, toPrepend)
-						if m.app.SearchPopupMode {
-							m.RebuildSearchPopupResults()
-							m.saveSearchState()
-						}
+					m.app.HistoryMessages[msg.ChannelID] = mergeHistoryMessages(hist, msg.Messages)
+					if m.app.SearchPopupMode {
+						m.RebuildSearchPopupResults()
+						m.saveSearchState()
 					}
 				}
 			}
@@ -4750,6 +4716,35 @@ func mergeHistoryMessages(existing []Message, newMsgs []Message) []Message {
 	})
 	return merged
 }
+
+// updateCachedMessages merges a list of messages into the in-memory caches (CachedMessages, HistoryMessages, and the active Messages list if current) and persists them in SQLite.
+func (m Model) updateCachedMessages(chatID string, msgs []Message) Model {
+	if len(msgs) == 0 {
+		return m
+	}
+	m.app.CachedMessages[chatID] = mergeHistoryMessages(m.app.CachedMessages[chatID], msgs)
+	m.app.HistoryMessages[chatID] = mergeHistoryMessages(m.app.HistoryMessages[chatID], msgs)
+
+	isActive := false
+	if m.channelSelectedIndex < 0 {
+		if chat := m.app.GetSelectedChat(); chat != nil && chat.ID == chatID {
+			isActive = true
+		}
+	} else {
+		if m.app.SelectedChannelID == chatID {
+			isActive = true
+		}
+	}
+	if isActive {
+		m.app.Messages = mergeHistoryMessages(m.app.Messages, msgs)
+	}
+
+	if m.app.Features.SqliteEnabled {
+		go SaveMessages(chatID, msgs)
+	}
+	return m
+}
+
 
 type UserSearchItemType int
 
