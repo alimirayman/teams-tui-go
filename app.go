@@ -195,6 +195,7 @@ type ChatSearchState struct {
 	SelectedIndex   int
 	ScrollOffset    int
 	ExpandedIndices map[int]bool
+	Status          string
 }
 
 // SearchPopupItem represents a message displayed inside the search popup (with context flag).

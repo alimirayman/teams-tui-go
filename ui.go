@@ -4525,6 +4525,7 @@ func (m *Model) saveSearchState() {
 	state.Results = m.app.SearchPopupResults
 	state.SelectedIndex = m.app.SearchPopupSelectedIndex
 	state.ScrollOffset = m.app.SearchPopupScrollOffset
+	state.Status = m.app.SearchStatus
 }
 
 // loadSearchState restores the search state for the selected conversation into active fields.
@@ -4539,12 +4540,14 @@ func (m *Model) loadSearchState() {
 		m.app.SearchPopupResults = nil
 		m.app.SearchPopupSelectedIndex = 0
 		m.app.SearchPopupScrollOffset = 0
+		m.app.SearchStatus = ""
 		return
 	}
 	m.app.SearchQuery = state.Query
 	m.app.SearchPopupResults = state.Results
 	m.app.SearchPopupSelectedIndex = state.SelectedIndex
 	m.app.SearchPopupScrollOffset = state.ScrollOffset
+	m.app.SearchStatus = state.Status
 }
 
 // getReactionKey creates a unique identifier for a reaction.
