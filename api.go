@@ -211,6 +211,39 @@ func (msg *Message) ProcessInlineImages() {
 	}
 }
 
+// FilterMessageAttachments removes unwanted rich card and URL-preview attachments
+// that are not downloadable files.
+func FilterMessageAttachments(msg *Message) {
+	if msg == nil {
+		return
+	}
+	var filtered []MessageAttachment
+	for _, att := range msg.Attachments {
+		if att.ContentType != nil {
+			ct := strings.ToLower(*att.ContentType)
+			// Ignore rich card attachments
+			if strings.Contains(ct, "card") {
+				continue
+			}
+			// Ignore reference attachments that do not point to SharePoint/OneDrive
+			if ct == "reference" {
+				if att.ContentURL != nil && !isSharePointURL(*att.ContentURL) {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, att)
+	}
+	msg.Attachments = filtered
+}
+
+// FilterMessagesAttachments applies FilterMessageAttachments to a slice of messages.
+func FilterMessagesAttachments(msgs []Message) {
+	for i := range msgs {
+		FilterMessageAttachments(&msgs[i])
+	}
+}
+
 // MessageReaction represents a reaction to a message.
 type MessageReaction struct {
 	ReactionType    string       `json:"reactionType"`
@@ -498,6 +531,9 @@ func GetMessages(accessToken, chatID string, top int) ([]Message, string, error)
 		next = newNext
 	}
 
+	// Filter out non-downloadable attachments (like rich cards and URL previews)
+	FilterMessagesAttachments(allMsgs)
+
 	// Ensure messages are sorted by creation time (newest first).
 	sort.Slice(allMsgs, func(i, j int) bool {
 		return allMsgs[i].CreatedDateTime > allMsgs[j].CreatedDateTime
@@ -526,6 +562,9 @@ func GetMessagesFromLink(accessToken, nextLink string) ([]Message, string, error
 	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, "", fmt.Errorf("GetMessagesFromLink: parse: %w", err)
 	}
+
+	// Filter out non-downloadable attachments (like rich cards and URL previews)
+	FilterMessagesAttachments(r.Value)
 
 	sort.Slice(r.Value, func(i, j int) bool {
 		return r.Value[i].CreatedDateTime > r.Value[j].CreatedDateTime
@@ -1154,6 +1193,9 @@ func GetChats(accessToken string, existingChats []Chat, currentUserName *string)
 
 	// Filter current user from member lists and compute display names.
 	for i := range chats {
+		if chats[i].LastMessagePreview != nil {
+			FilterMessageAttachments(chats[i].LastMessagePreview)
+		}
 		if currentUserName != nil {
 			chats[i].Members = filterMember(chats[i].Members, *currentUserName)
 		}
@@ -1183,6 +1225,10 @@ func GetChat(accessToken, chatID string, currentUserName *string) (*Chat, error)
 
 	// Fetch members (same as GetChats does per-chat).
 	c.Members = GetChatMembers(accessToken, chatID)
+
+	if c.LastMessagePreview != nil {
+		FilterMessageAttachments(c.LastMessagePreview)
+	}
 
 	// Filter current user and compute display name.
 	if currentUserName != nil {
@@ -2320,6 +2366,9 @@ func GetChannelMessages(accessToken, teamID, channelID string, top int) ([]Messa
 		})
 		allMsgs = append(allMsgs, replies...)
 	}
+
+	// Filter out non-downloadable attachments (like rich cards and URL previews)
+	FilterMessagesAttachments(allMsgs)
 
 	// Reverse so the slice is newest-first (matching the chat message convention;
 	// the UI iterates from len-1 downward to render oldest at top, newest at bottom).

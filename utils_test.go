@@ -344,4 +344,56 @@ func TestComputeDisplayName(t *testing.T) {
 	}
 }
 
+func TestFilterMessageAttachments(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+
+	cardType := "application/vnd.microsoft.card.thumbnail"
+	referenceType := "reference"
+	imageType := "image/png"
+	messageRefType := "messageReference"
+
+	msg := Message{
+		Attachments: []MessageAttachment{
+			{
+				ID:          "1",
+				ContentType: &cardType,
+				ContentURL:  strPtr("https://www.youtube.com/watch?v=123"),
+			},
+			{
+				ID:          "2",
+				ContentType: &referenceType,
+				ContentURL:  strPtr("https://some-tenant.sharepoint.com/personal/file.docx"),
+			},
+			{
+				ID:          "3",
+				ContentType: &referenceType,
+				ContentURL:  strPtr("https://www.youtube.com/watch?v=456"),
+			},
+			{
+				ID:          "4",
+				ContentType: &imageType,
+				ContentURL:  strPtr("https://graph.microsoft.com/v1.0/chats/inline-img"),
+			},
+			{
+				ID:          "5",
+				ContentType: &messageRefType,
+			},
+		},
+	}
+
+	FilterMessageAttachments(&msg)
+
+	if len(msg.Attachments) != 3 {
+		t.Fatalf("expected 3 attachments after filtering, got %d", len(msg.Attachments))
+	}
+
+	expectedIDs := map[string]bool{"2": true, "4": true, "5": true}
+	for _, att := range msg.Attachments {
+		if !expectedIDs[att.ID] {
+			t.Errorf("unexpected attachment ID remaining: %s", att.ID)
+		}
+	}
+}
+
+
 
