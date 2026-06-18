@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.1.4] - 2026-06-18
+
+### Features
+
+- *(ui)* **Allow dismissing mention autocomplete with Esc** - ([3f68ace](https://github.com/nospor/teams-tui-go/commit/3f68ace808d6daec00ee3fa68f03dd3f25b4964d))
+
+
+- *(channels)* **Sort threads by last activity timestamp** - ([c041b3c](https://github.com/nospor/teams-tui-go/commit/c041b3cdcd5f5b852b8b43474ce913f781e72506))
+
+
+> Instead of sorting root channel messages strictly by their root creation
+> date, sort them by their last activity (the newest timestamp between the
+> root message and all its replies).
+> 
+> This ensures that:
+> 1. Active threads with new replies bubble up to the bottom of the
+>    visible channel view, rather than staying scrolled off-screen.
+> 2. The sidebar unread indicator and channel sorting correctly trigger
+>    and bubble up based on the true latest reply timestamp.
+
+
+- *(ui)* **Add bulk user presence status popup for chats** - ([1d9a8f0](https://github.com/nospor/teams-tui-go/commit/1d9a8f0d5463369841c01d01fd7d9341c0c517c5))
+
+
+> Add support for checking the real-time presence status of all
+> participants in oneOnOne and group chats by pressing 'p' in the sidebar
+> chat list (when the 'presence_enabled' configuration is enabled).
+
+
+
+### Other
+
+- **Exclude quoted-reply references from view popup attachments** - ([c6abfbe](https://github.com/nospor/teams-tui-go/commit/c6abfbedbefe4acca045730056cfcea37b25200f))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.1.3 [skip ci]** - ([e149b6e](https://github.com/nospor/teams-tui-go/commit/e149b6e0920d563056454314be7fd1b62b409902))
+
+
+
 ## [1.1.3] - 2026-06-17
 
 ### Features
