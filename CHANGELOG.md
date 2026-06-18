@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.1.5] - 2026-06-18
+
+### Features
+
+- *(filepicker)* **Support sorting by datetime and persistence** - ([2cd8a45](https://github.com/nospor/teams-tui-go/commit/2cd8a45b400a583818fd97d731a94965f7b82f5e))
+
+
+- **Add compose mode file attachment and OneDrive/SharePoint upload support** - ([13d7400](https://github.com/nospor/teams-tui-go/commit/13d74000aaad93da677a8e654b35c29ac2b07c26))
+
+
+> - Implement file picker popup (Ctrl+f) in compose mode gated by
+> `file_upload_enabled`.
+> - Support files up to 50MB with automated upload sessions for chunked
+> writes (> 4MB).
+> - Resolve reference attachment mapping issue by matching
+> `listItemUniqueId` parsed from OneDrive/SharePoint response ETags.
+> - Add status indicators for message uploading, sending, and updating
+> states.
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.1.4 [skip ci]** - ([2117acd](https://github.com/nospor/teams-tui-go/commit/2117acd7c7dc7ad97c9d9e30e254074b2f49ac2d))
+
+
+
 ## [1.1.4] - 2026-06-18
 
 ### Features
