@@ -449,8 +449,7 @@ func BuildScopes() string {
 		}
 	}
 	if ResolveFeatureTeamsChannels() {
-		// base += " Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send ChannelMessage.ReadWrite"
-		base += " Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send"
+		base += " Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send ChannelMessage.ReadWrite"
 	}
 	if ResolveFeatureChannelMentions() {
 		base += " TeamMember.Read.All"

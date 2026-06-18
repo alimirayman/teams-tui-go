@@ -2392,9 +2392,20 @@ func GetChannelMessages(accessToken, teamID, channelID string, top int) ([]Messa
 		}
 	}
 
-	// Sort root messages oldest-first.
+	// Sort root messages by last activity (the latest timestamp among the root and all its
+	// replies), oldest-first. This ensures that a thread receiving a new reply is promoted
+	// to the bottom of the visible channel view — consistent with Teams/Slack/Discord UX.
+	lastActivity := func(root Message) string {
+		ts := root.CreatedDateTime
+		for _, r := range replyMap[root.ID] {
+			if r.CreatedDateTime > ts {
+				ts = r.CreatedDateTime
+			}
+		}
+		return ts
+	}
 	sort.Slice(rootMsgs, func(i, j int) bool {
-		return rootMsgs[i].CreatedDateTime < rootMsgs[j].CreatedDateTime
+		return lastActivity(rootMsgs[i]) < lastActivity(rootMsgs[j])
 	})
 
 	// Build thread-grouped list: each root followed by its replies in chronological order.
