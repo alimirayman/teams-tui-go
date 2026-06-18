@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/bubbles/filepicker"
+	"github.com/nospor/teams-tui-go/filepicker"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
@@ -303,8 +303,21 @@ func NewModel(app *App, clientID, userID string) Model {
 	fp := filepicker.New()
 	fp.AllowedTypes = []string{} // allow all types
 	fp.FileAllowed = true
-	if home, err := os.UserHomeDir(); err == nil {
+	sortBy, sortOrder, lastDir := LoadFilepickerSettings()
+	if lastDir != "" {
+		fp.CurrentDirectory = lastDir
+	} else if home, err := os.UserHomeDir(); err == nil {
 		fp.CurrentDirectory = home
+	}
+	if sortBy == "Datetime" {
+		fp.SortBy = filepicker.SortByDatetime
+	} else {
+		fp.SortBy = filepicker.SortByName
+	}
+	if sortOrder == "desc" {
+		fp.SortOrder = filepicker.SortDescending
+	} else {
+		fp.SortOrder = filepicker.SortAscending
 	}
 	fp.Styles = filepicker.DefaultStyles()
 	fp.Styles.Directory = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
@@ -383,7 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if popupH < 15 {
 			popupH = 15
 		}
-		m.filepicker.SetHeight(popupH - 6)
+		m.filepicker.SetHeight(popupH - 7)
 
 	// ── Heartbeat tick ───────────────────────────────────────────────────
 	case MsgTick:
@@ -5826,7 +5839,12 @@ func (m Model) handleFilePickerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.filepicker, cmd = m.filepicker.Update(msg)
 
+	if msg.String() == "s" || msg.String() == "ctrl+s" || msg.String() == "o" || msg.String() == "ctrl+o" {
+		_ = SaveFilepickerSettings(m.filepicker.SortBy.String(), m.filepicker.SortOrder.String(), m.filepicker.CurrentDirectory)
+	}
+
 	if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+		_ = SaveFilepickerSettings(m.filepicker.SortBy.String(), m.filepicker.SortOrder.String(), m.filepicker.CurrentDirectory)
 		m.app.FilePickerPopupMode = false
 		m.app.SkipTextareaUpdate = true
 		return m, tea.Batch(cmd, attachFileFromFilepathCmd(path))
@@ -6395,14 +6413,15 @@ func (m Model) renderFilePickerPopup(w, h int) string {
 	title := lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render("Select File to Attach")
 
 	currentDir := lipgloss.NewStyle().Foreground(colWhite).Bold(true).Render("Directory: " + m.filepicker.CurrentDirectory)
+	sortMode := lipgloss.NewStyle().Foreground(colYellow).Render(fmt.Sprintf("Sorted by: %s (%s)", m.filepicker.SortBy.String(), m.filepicker.SortOrder.String()))
 
 	var lines []string
-	lines = append(lines, title, currentDir, "")
+	lines = append(lines, title, currentDir, sortMode, "")
 
 	// Render the filepicker component
 	lines = append(lines, m.filepicker.View())
 
-	footer := dimStyle.Italic(true).Render("j/k or ↑/↓: Navigate • Enter: Attach • Esc / q: Cancel")
+	footer := dimStyle.Italic(true).Render("j/k or ↑/↓: Navigate • s: Change Sort • o: Change Order • Enter: Attach • Esc / q: Cancel")
 	lines = append(lines, "", footer)
 
 	return lipgloss.NewStyle().

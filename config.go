@@ -96,6 +96,56 @@ func SaveUnhiddenChannels(unhidden map[string]bool) error {
 	return os.WriteFile(filepath.Join(dir, "unhidden_channels.json"), data, 0o600)
 }
 
+// FilepickerSettings holds the filepicker sorting and directory persistence.
+type FilepickerSettings struct {
+	SortBy           string `json:"sort_by"`
+	SortOrder        string `json:"sort_order"`
+	CurrentDirectory string `json:"current_directory,omitempty"`
+}
+
+// LoadFilepickerSettings reads the filepicker sorting settings from filepicker_settings.json.
+// Returns default values if the file does not exist or cannot be parsed.
+func LoadFilepickerSettings() (string, string, string) {
+	dir, err := GetAppDir()
+	if err != nil {
+		return "Name", "asc", ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "filepicker_settings.json"))
+	if err != nil {
+		return "Name", "asc", ""
+	}
+	var settings FilepickerSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return "Name", "asc", ""
+	}
+	if settings.SortBy == "" {
+		settings.SortBy = "Name"
+	}
+	if settings.SortOrder == "" {
+		settings.SortOrder = "asc"
+	}
+	return settings.SortBy, settings.SortOrder, settings.CurrentDirectory
+}
+
+// SaveFilepickerSettings writes the current filepicker settings to filepicker_settings.json.
+func SaveFilepickerSettings(sortBy string, sortOrder string, currentDirectory string) error {
+	dir, err := GetAppDir()
+	if err != nil {
+		return err
+	}
+	settings := FilepickerSettings{
+		SortBy:           sortBy,
+		SortOrder:        sortOrder,
+		CurrentDirectory: currentDirectory,
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not marshal filepicker settings: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, "filepicker_settings.json"), data, 0o600)
+}
+
+
 
 const appDirName = "teams-tui-go"
 
