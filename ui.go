@@ -426,7 +426,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if refreshDur <= 0 {
 			refreshDur = 2 * time.Minute
 		}
-		if m.app.Features.TeamsChannels && m.focused && !isSleepMode && time.Since(m.lastChannelRefresh) >= refreshDur {
+		if m.app.Features.TeamsChannels && time.Since(m.lastChannelRefresh) >= refreshDur {
 			m.lastChannelRefresh = time.Now()
 			for _, twc := range m.app.TeamsData {
 				for _, ch := range twc.Channels {
