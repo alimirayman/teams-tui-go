@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.7] - 2026-06-23
+
+### Bug Fixes
+
+- *(ui)* **Poll reactions in round-robin so all chats update in background and sleep mode** - ([e24e66f](https://github.com/nospor/teams-tui-go/commit/e24e66f8fef79849ad1930cc730bef9b81778bf3))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.1.6 [skip ci]** - ([ba40213](https://github.com/nospor/teams-tui-go/commit/ba402135a7297b6e3cd487a9b1468380b8c94464))
+
+
+
 ## [1.1.6] - 2026-06-22
 
 ### Bug Fixes
