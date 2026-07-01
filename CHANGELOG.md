@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.8] - 2026-07-01
+
+### Bug Fixes
+
+- **Trigger instant message refresh for chats with new background activity** - ([5e5d93f](https://github.com/nospor/teams-tui-go/commit/5e5d93f1f76e13e7d9a512d58b9fdb74ecaf1654))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.1.7 [skip ci]** - ([bc8d695](https://github.com/nospor/teams-tui-go/commit/bc8d695d13cec0c8e07e548a07ef012731695fee))
+
+
+
 ## [1.1.7] - 2026-06-23
 
 ### Bug Fixes
