@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -282,6 +283,9 @@ type Model struct {
 
 	// File picker for browsing/attaching files from computer.
 	filepicker filepicker.Model
+
+	lastWrittenMessages  int
+	lastWrittenReactions int
 }
 
 // NewModel creates the initial Bubble Tea model.
@@ -350,6 +354,8 @@ func NewModel(app *App, clientID, userID string) Model {
 		focused:              true,
 		channelSelectedIndex: -1,
 		filepicker:           fp,
+		lastWrittenMessages:  -1,
+		lastWrittenReactions: -1,
 	}
 }
 
@@ -380,9 +386,7 @@ func (m Model) Init() tea.Cmd {
 // Update
 // ---------------------------------------------------------------------------
 
-// Update is the Bubble Tea update function — processes messages and returns
-// the new model plus any commands.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	wasInputMode := m.app.InputMode
 	wasSearchMode := m.app.SearchMode
@@ -2563,6 +2567,65 @@ func (m Model) handleUrlSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.app.MessageSelectionMode = false
 	}
 	return m, nil
+}
+
+// Update is the Bubble Tea update function — processes messages and returns
+// the new model plus any commands.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updatedModel, cmd := m.updateInternal(msg)
+	updatedModel = updatedModel.writeAppState()
+	return updatedModel, cmd
+}
+
+func (m Model) writeAppState() Model {
+	newMessages := 0
+	newReactions := 0
+
+	for _, c := range m.app.Chats {
+		if m.isUnread(c) {
+			newMessages++
+		}
+		if m.hasUnreadReactions(c) {
+			newReactions++
+		}
+	}
+
+	if m.app.Features.TeamsChannels {
+		for _, entry := range m.allChannels() {
+			lastID := m.lastMsgID[entry.channelID]
+			if lastID != "" && m.lastReadMsgID[entry.channelID] != lastID {
+				newMessages++
+			}
+		}
+	}
+
+	// Only write if something has changed.
+	if m.lastWrittenMessages == newMessages && m.lastWrittenReactions == newReactions {
+		return m
+	}
+
+	m.lastWrittenMessages = newMessages
+	m.lastWrittenReactions = newReactions
+
+	type StateJSON struct {
+		NewMessages  int `json:"new_messages"`
+		NewReactions int `json:"new_reactions"`
+	}
+
+	data := StateJSON{
+		NewMessages:  newMessages,
+		NewReactions: newReactions,
+	}
+
+	jsonData, err := json.MarshalIndent(data, "", "    ")
+	if err == nil {
+		if cacheDir, err := GetCacheDir(); err == nil {
+			stateFile := filepath.Join(cacheDir, "state.json")
+			_ = os.WriteFile(stateFile, jsonData, 0o644)
+		}
+	}
+
+	return m
 }
 
 // ---------------------------------------------------------------------------

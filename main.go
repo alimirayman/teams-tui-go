@@ -737,6 +737,7 @@ func main() {
 	}
 
 	model = model.rebuildChatList()
+	model = model.writeAppState()
 
 	// 9. Start Bubble Tea program.
 	p := tea.NewProgram(model, tea.WithAltScreen())
