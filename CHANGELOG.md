@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.9] - 2026-07-06
+
+### Features
+
+- **Write total unread messages and reactions counts to state.json cache file** - ([9d768b0](https://github.com/nospor/teams-tui-go/commit/9d768b053d88af93a81680307b6eae77f65b7571))
+
+
+
+### Miscellaneous Tasks
+
+- **Update CHANGELOG.md for v1.1.8 [skip ci]** - ([e610966](https://github.com/nospor/teams-tui-go/commit/e610966da6da7749e589c6f84ebe0a9ed126bd3e))
+
+
+
 ## [1.1.8] - 2026-07-01
 
 ### Bug Fixes
