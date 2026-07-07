@@ -12,7 +12,7 @@ Authenticates via **OAuth2 Device Code Flow** (no browser redirect needed), fetc
 - 💬 List all your Teams chats (1:1, group, meetings) with computed display names
 - 📨 View messages in any chat with HTML-to-text rendering (images, attachments, emoji, **bold**, *italic*, ~~strikethrough~~, `code`, lists)
 - ❤️ Message Interactions — view and add reactions (Heart, Like, Laugh, etc.) to any message
-- 🔗 Clickable & Extractable URLs — links are clickable in supported terminals and can be extracted/copied via the `u` key
+- 🔗 Clickable, Extractable & Openable URLs — links are clickable in supported terminals, can be extracted/copied via the `u` key, and opened in your browser/app via the `o` key
 - ✏️ Message Management — send, edit, and delete messages (includes multi-line support)
 - **✍️ Markdown Formatting** — compose messages with `**bold**`, `*italic*`, ~~`~~strike~~`~~, `` `code` ``, fenced code blocks, and bullet/ordered lists; formatting is sent as rich HTML to all Teams clients and rendered with ANSI styles in the TUI
 - 📋 **Clipboard Image Pasting** — paste images from your system clipboard directly into the compose text field using **Ctrl+V** (automatically base64 encoded and sent as inline HTML attachments)
@@ -158,6 +158,20 @@ Configure the external editor to open when pressing `Ctrl+g` in compose mode in 
   }
   ```
   - `external_editor`: The editor command or path to run (e.g. `"vim"`, `"neovim"`, `"nano"`). If empty/unspecified, it falls back to `$EDITOR`, then `$VISUAL`, and defaults to `"vim"`.
+
+### URL Opening Commands
+Configure the commands used to open URLs when pressing `o` on a message or from the URL selection menu in `~/.config/teams-tui-go/config.json`:
+
+  ```json
+  {
+    "browser_command": "xdg-open",
+    "youtrack_command": "yt-tui",
+    "gitlab_command": "gitlab-tui"
+  }
+  ```
+  - `browser_command`: The command used to open general URLs (default: `"xdg-open"`, but you can specify e.g. `"firefox"` or `"google-chrome"`). This key is always initialized in `config.json`.
+  - `youtrack_command`: The optional command to open YouTrack URLs (default: `"yt-tui"`, but you can specify e.g. `"youtrack-cli"` or `"yt-cli"`). If a URL contains `"youtrack"`, this command is executed. Useful with tools like [yt-tui](https://github.com/nospor/yt-tui).
+  - `gitlab_command`: The optional command to open GitLab URLs (default: `"gitlab-tui"`). If a URL contains `"gitlab"` (for example, merge requests, pipelines, or jobs), this command is executed. Useful with tools like [gitlab-tui](https://github.com/nospor/gitlab-tui).
 
 ### Chat Icon Themes
 You can configure the style of chat type indicators in the sidebar using `~/.config/teams-tui-go/config.json`:
@@ -340,7 +354,8 @@ When in compose mode (`i`), you can press **`Ctrl+g`** to open an external edito
 | `Enter`      | Download selected attachment (in `v` attachment cursor)   |
 | `r`          | React to selected message (in Message Mode)               |
 | `y`          | Copy (yank) message text (in Message Mode)                |
-| `u`          | Copy (yank) URL from message (in Message Mode)            |
+| `u`          | Copy (yank) URL from message (in Message Mode / History Search) |
+| `o`          | Open URL from message (in Message Mode / History Search / URL list) |
 | `d`          | Delete selected message (in Message Mode)                 |
 | `e`          | Edit selected message (in Message Mode)                   |
 | `a`          | Answer (reply) to selected message (in Message Mode)      |

@@ -178,6 +178,9 @@ type Config struct {
 	ChannelMsgRefreshMin   *int  `json:"channel_msg_refresh_min,omitempty"`
 	SqliteEnabled          *bool `json:"sqlite_enabled,omitempty"`
 	ExternalEditor         *string `json:"external_editor,omitempty"`
+	BrowserCommand         *string `json:"browser_command,omitempty"`
+	YoutrackCommand        *string `json:"youtrack_command,omitempty"`
+	GitlabCommand          *string `json:"gitlab_command,omitempty"`
 }
 
 // GetAppDir returns ~/.config/teams-tui-go/, creating it if necessary.
@@ -340,6 +343,11 @@ func InitConfig() {
 	if cfg.ExternalEditor == nil {
 		editor := ""
 		cfg.ExternalEditor = &editor
+		modified = true
+	}
+	if cfg.BrowserCommand == nil {
+		cmd := "xdg-open"
+		cfg.BrowserCommand = &cmd
 		modified = true
 	}
 
@@ -539,3 +547,37 @@ func ResolveExternalEditor() string {
 	}
 	return "vim"
 }
+
+// ResolveBrowserCommand returns the browser command, using precedence:
+//  1. config.json -> browser_command
+//  2. Default ("xdg-open")
+func ResolveBrowserCommand() string {
+	cfg := LoadConfig()
+	if cfg != nil && cfg.BrowserCommand != nil && *cfg.BrowserCommand != "" {
+		return *cfg.BrowserCommand
+	}
+	return "xdg-open"
+}
+
+// ResolveYoutrackCommand returns the youtrack command, using precedence:
+//  1. config.json -> youtrack_command
+//  2. Default ("") - meaning fall back to browser command if not set
+func ResolveYoutrackCommand() string {
+	cfg := LoadConfig()
+	if cfg != nil && cfg.YoutrackCommand != nil && *cfg.YoutrackCommand != "" {
+		return *cfg.YoutrackCommand
+	}
+	return ""
+}
+
+// ResolveGitlabCommand returns the gitlab command, using precedence:
+//  1. config.json -> gitlab_command
+//  2. Default ("") - meaning fall back to browser command if not set
+func ResolveGitlabCommand() string {
+	cfg := LoadConfig()
+	if cfg != nil && cfg.GitlabCommand != nil && *cfg.GitlabCommand != "" {
+		return *cfg.GitlabCommand
+	}
+	return ""
+}
+

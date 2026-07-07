@@ -187,6 +187,11 @@ type MsgEditorFinished struct {
 	Err     error
 }
 
+// MsgURLOpened is sent when a URL-opening command finishes.
+type MsgURLOpened struct {
+	Err error
+}
+
 // ---------------------------------------------------------------------------
 // Model — the Bubble Tea application model
 // ---------------------------------------------------------------------------
@@ -1200,6 +1205,23 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 			m.textarea.SetValue(msg.Content)
 			m.app.InputBuffer = msg.Content
 			m.textarea.CursorEnd()
+		}
+
+	// ── URL opened finished ────────────────────────────────────────────────
+	case MsgURLOpened:
+		if msg.Err != nil {
+			errStr := "Failed to open URL: " + msg.Err.Error()
+			if m.app.SearchPopupMode {
+				m.app.SetSearchStatus(errStr, 3*time.Second)
+			} else {
+				m.app.SetStatus(errStr, 3*time.Second)
+			}
+		} else {
+			if m.app.SearchPopupMode {
+				m.app.SetSearchStatus("URL opened", 3*time.Second)
+			} else {
+				m.app.SetStatus("URL opened", 3*time.Second)
+			}
 		}
 
 	// ── Presence loaded ───────────────────────────────────────
@@ -2375,6 +2397,26 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 					m.app.MessageSelectionMode = false
 				} else {
 					m.app.UrlSelectionMode = true
+					m.app.UrlSelectionOpenMode = false
+					m.app.UrlSelectedIndex = 0
+					m.app.UrlsInMessage = urls
+				}
+			}
+		}
+		return m, nil
+	case "o":
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			if msgObj.Body != nil && msgObj.Body.Content != nil {
+				urls := ExtractURLs(*msgObj.Body.Content)
+				if len(urls) == 0 {
+					m.app.SetStatus("No URLs found in message", 3*time.Second)
+				} else if len(urls) == 1 {
+					m.app.MessageSelectionMode = false
+					return m, openURLCmd(urls[0], m.app.BrowserCommand, m.app.YoutrackCommand, m.app.GitlabCommand)
+				} else {
+					m.app.UrlSelectionMode = true
+					m.app.UrlSelectionOpenMode = true
 					m.app.UrlSelectedIndex = 0
 					m.app.UrlsInMessage = urls
 				}
@@ -2531,13 +2573,36 @@ func (m Model) updateUrlSelection(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.app.UrlSelectedIndex--
 		}
 
-	case "enter", "y":
+	case "enter":
 		url := m.app.UrlsInMessage[m.app.UrlSelectedIndex]
-		if err := clipboard.WriteAll(url); err == nil {
-			m.app.SetStatus("URL copied to clipboard", 3*time.Second)
-		}
 		m.app.UrlSelectionMode = false
 		m.app.MessageSelectionMode = false
+		if m.app.UrlSelectionOpenMode {
+			return m, openURLCmd(url, m.app.BrowserCommand, m.app.YoutrackCommand, m.app.GitlabCommand)
+		} else {
+			if err := clipboard.WriteAll(url); err == nil {
+				m.app.SetStatus("URL copied to clipboard", 3*time.Second)
+			}
+			return m, nil
+		}
+
+	case "y":
+		if !m.app.UrlSelectionOpenMode {
+			url := m.app.UrlsInMessage[m.app.UrlSelectedIndex]
+			m.app.UrlSelectionMode = false
+			m.app.MessageSelectionMode = false
+			if err := clipboard.WriteAll(url); err == nil {
+				m.app.SetStatus("URL copied to clipboard", 3*time.Second)
+			}
+		}
+
+	case "o":
+		if m.app.UrlSelectionOpenMode {
+			url := m.app.UrlsInMessage[m.app.UrlSelectedIndex]
+			m.app.UrlSelectionMode = false
+			m.app.MessageSelectionMode = false
+			return m, openURLCmd(url, m.app.BrowserCommand, m.app.YoutrackCommand, m.app.GitlabCommand)
+		}
 	}
 	return m, nil
 }
@@ -2558,13 +2623,36 @@ func (m Model) handleUrlSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.app.UrlSelectedIndex--
 		}
 
-	case "enter", "y":
+	case "enter":
 		url := m.app.UrlsInMessage[m.app.UrlSelectedIndex]
-		if err := clipboard.WriteAll(url); err == nil {
-			m.app.SetStatus("URL copied to clipboard", 3*time.Second)
-		}
 		m.app.UrlSelectionMode = false
 		m.app.MessageSelectionMode = false
+		if m.app.UrlSelectionOpenMode {
+			return m, openURLCmd(url, m.app.BrowserCommand, m.app.YoutrackCommand, m.app.GitlabCommand)
+		} else {
+			if err := clipboard.WriteAll(url); err == nil {
+				m.app.SetStatus("URL copied to clipboard", 3*time.Second)
+			}
+			return m, nil
+		}
+
+	case "y":
+		if !m.app.UrlSelectionOpenMode {
+			url := m.app.UrlsInMessage[m.app.UrlSelectedIndex]
+			m.app.UrlSelectionMode = false
+			m.app.MessageSelectionMode = false
+			if err := clipboard.WriteAll(url); err == nil {
+				m.app.SetStatus("URL copied to clipboard", 3*time.Second)
+			}
+		}
+
+	case "o":
+		if m.app.UrlSelectionOpenMode {
+			url := m.app.UrlsInMessage[m.app.UrlSelectedIndex]
+			m.app.UrlSelectionMode = false
+			m.app.MessageSelectionMode = false
+			return m, openURLCmd(url, m.app.BrowserCommand, m.app.YoutrackCommand, m.app.GitlabCommand)
+		}
 	}
 	return m, nil
 }
@@ -2832,7 +2920,7 @@ func (m Model) renderRightPanel(w, h int) string {
 					lipgloss.NewStyle().Foreground(colDimGray).Render("  (K/J:scroll, m:select, ?:help)")
 			}
 		} else if m.app.MessageSelectionMode {
-			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, d:delete, e:edit, a:answer, v:view, p:presence, i:profile, ESC/m:exit)"
+			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, o:open, d:delete, e:edit, a:answer, v:view, p:presence, i:profile, ESC/m:exit)"
 		}
 		msgContent := m.renderMessages(w, h-1)
 		return normalBorder.Width(w).Height(h).
@@ -4076,7 +4164,14 @@ func (m Model) renderUrlSelection(w, h int) string {
 		return ""
 	}
 
-	title := lipgloss.NewStyle().Foreground(colYellow).Bold(true).Render("Select URL to yank (Enter/y to copy, Esc/q to cancel):")
+	var titleText string
+	if m.app.UrlSelectionOpenMode {
+		titleText = "Select URL to open (Enter to open, Esc/q to cancel):"
+	} else {
+		titleText = "Select URL to yank (Enter/y to copy, Esc/q to cancel):"
+	}
+
+	title := lipgloss.NewStyle().Foreground(colYellow).Bold(true).Render(titleText)
 	var list strings.Builder
 	list.WriteString(title + "\n\n")
 
@@ -4477,7 +4572,7 @@ func (m Model) renderSearchPopup(w, h int) string {
 	title := titleStyle.Render(titleText)
 
 	instructions := lipgloss.NewStyle().Foreground(colDimGray).Render(
-		" j/k: Nav | y: Yank | u: URL | o/Enter: Expand context | /: Edit | Esc: Close",
+		" j/k: Nav | y: Yank | u: URL | o: Open URL | Enter: Expand | /: Edit | Esc: Close",
 	)
 
 	var list strings.Builder
@@ -4769,7 +4864,7 @@ func (m Model) handleSearchPopupNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 				}
 			}
 		}
-	case "o", "enter":
+	case "enter":
 		if len(m.app.SearchPopupResults) > 0 && m.app.SearchPopupSelectedIndex < len(m.app.SearchPopupResults) {
 			item := m.app.SearchPopupResults[m.app.SearchPopupSelectedIndex]
 			convID := m.activeConversationID()
@@ -4816,6 +4911,24 @@ func (m Model) handleSearchPopupNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 					}
 				} else {
 					m.app.UrlSelectionMode = true
+					m.app.UrlSelectionOpenMode = false
+					m.app.UrlSelectedIndex = 0
+					m.app.UrlsInMessage = urls
+				}
+			}
+		}
+	case "o":
+		if len(m.app.SearchPopupResults) > 0 && m.app.SearchPopupSelectedIndex < len(m.app.SearchPopupResults) {
+			msgObj := m.app.SearchPopupResults[m.app.SearchPopupSelectedIndex].Message
+			if msgObj.Body != nil && msgObj.Body.Content != nil {
+				urls := ExtractURLs(*msgObj.Body.Content)
+				if len(urls) == 0 {
+					m.app.SetSearchStatus("No URLs found in message", 3*time.Second)
+				} else if len(urls) == 1 {
+					return m, openURLCmd(urls[0], m.app.BrowserCommand, m.app.YoutrackCommand, m.app.GitlabCommand)
+				} else {
+					m.app.UrlSelectionMode = true
+					m.app.UrlSelectionOpenMode = true
 					m.app.UrlSelectedIndex = 0
 					m.app.UrlsInMessage = urls
 				}
@@ -5800,6 +5913,7 @@ func (m Model) getHelpContentLines() []string {
 			{"v", "View message popup"},
 			{"y", "Yank message to clipboard"},
 			{"u", "Extract URLs"},
+			{"o", "Open URLs"},
 			{"r", "React to message"},
 			{"a", "Reply (quote) message"},
 			{"d", "Delete message"},
@@ -5816,10 +5930,11 @@ func (m Model) getHelpContentLines() []string {
 			{"ESC / q / v", "Close popup"},
 		}},
 		{"History Search (/)", [][2]string{
-			{"Enter", "Submit query / focus results"},
+			{"Enter", "Submit query / focus results / Expand context"},
 			{"j / k", "Navigate results"},
 			{"y", "Yank selected message"},
 			{"u", "Extract URLs"},
+			{"o", "Open URLs"},
 			{"ESC", "Close search popup"},
 		}},
 		{"Chat Search (c)", [][2]string{

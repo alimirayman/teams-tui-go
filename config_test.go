@@ -67,6 +67,16 @@ func TestInitConfig(t *testing.T) {
 	if cfg.ExternalEditor == nil || *cfg.ExternalEditor != "" {
 		t.Errorf("expected external editor to be empty string default, got %v", cfg.ExternalEditor)
 	}
+	if cfg.BrowserCommand == nil || *cfg.BrowserCommand != "xdg-open" {
+		t.Errorf("expected browser command 'xdg-open', got %v", cfg.BrowserCommand)
+	}
+	if cfg.YoutrackCommand != nil {
+		t.Errorf("expected youtrack command to be nil, got %v", cfg.YoutrackCommand)
+	}
+	if cfg.GitlabCommand != nil {
+		t.Errorf("expected gitlab command to be nil, got %v", cfg.GitlabCommand)
+	}
+
 
 	// Case 2: Config exists but is missing some options (e.g. partial).
 	// We'll write a custom config with only ClientID and MessageLimit set, and others missing/nil.
@@ -121,6 +131,15 @@ func TestInitConfig(t *testing.T) {
 	}
 	if updatedCfg.ExternalEditor == nil || *updatedCfg.ExternalEditor != "" {
 		t.Errorf("expected default external editor to be empty string, got %v", updatedCfg.ExternalEditor)
+	}
+	if updatedCfg.BrowserCommand == nil || *updatedCfg.BrowserCommand != "xdg-open" {
+		t.Errorf("expected default browser command 'xdg-open', got %v", updatedCfg.BrowserCommand)
+	}
+	if updatedCfg.YoutrackCommand != nil {
+		t.Errorf("expected default youtrack command to be nil, got %v", updatedCfg.YoutrackCommand)
+	}
+	if updatedCfg.GitlabCommand != nil {
+		t.Errorf("expected default gitlab command to be nil, got %v", updatedCfg.GitlabCommand)
 	}
 }
 
@@ -442,3 +461,60 @@ func TestResolveExternalEditor(t *testing.T) {
 		t.Errorf("expected config file editor to resolve to 'neovim', got %q", resolved)
 	}
 }
+
+func TestResolveURLCommands(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "teams-tui-url-cmd-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	oldXdg := os.Getenv("XDG_CONFIG_HOME")
+	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
+	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Case 1: Defaults.
+	if r := ResolveBrowserCommand(); r != "xdg-open" {
+		t.Errorf("expected ResolveBrowserCommand to resolve to 'xdg-open', got %q", r)
+	}
+	if r := ResolveYoutrackCommand(); r != "" {
+		t.Errorf("expected ResolveYoutrackCommand to resolve to '', got %q", r)
+	}
+	if r := ResolveGitlabCommand(); r != "" {
+		t.Errorf("expected ResolveGitlabCommand to resolve to '', got %q", r)
+	}
+
+	// Case 2: Config overrides.
+	appDir, err := GetAppDir()
+	if err != nil {
+		t.Fatalf("GetAppDir failed: %v", err)
+	}
+	configPath := filepath.Join(appDir, "config.json")
+
+	browserVal := "firefox"
+	youtrackVal := "yt-cli"
+	gitlabVal := "gitlab-cli"
+	cfg := Config{
+		BrowserCommand:  &browserVal,
+		YoutrackCommand: &youtrackVal,
+		GitlabCommand:   &gitlabVal,
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	if r := ResolveBrowserCommand(); r != "firefox" {
+		t.Errorf("expected ResolveBrowserCommand to resolve to 'firefox', got %q", r)
+	}
+	if r := ResolveYoutrackCommand(); r != "yt-cli" {
+		t.Errorf("expected ResolveYoutrackCommand to resolve to 'yt-cli', got %q", r)
+	}
+	if r := ResolveGitlabCommand(); r != "gitlab-cli" {
+		t.Errorf("expected ResolveGitlabCommand to resolve to 'gitlab-cli', got %q", r)
+	}
+}
+

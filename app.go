@@ -114,6 +114,7 @@ type App struct {
 	EditingMessageID           *string
 	ReplyToMessage             *Message // set when user presses 'a' to reply-quote a message
 	UrlSelectionMode           bool
+	UrlSelectionOpenMode       bool // true if opening, false if yanking/copying
 	UrlSelectedIndex           int
 	UrlsInMessage              []string
 	MessageLineOffsets         []int
@@ -175,6 +176,9 @@ type App struct {
 	ChannelReplyToID      string // root message ID when replying to a channel thread ("" = new root post)
 	ChannelMsgRefreshMin  int
 	ExternalEditor        string // command/path for the external editor
+	BrowserCommand        string // command to open URLs
+	YoutrackCommand       string // command to open YouTrack URLs
+	GitlabCommand         string // command to open GitLab URLs
 
 	// ── Mention Popup Autocomplete ───────────────────────────────────────
 	MentionPopupMode          bool

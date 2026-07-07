@@ -438,6 +438,38 @@ func openExternalEditorCmd(currentText, editorCmd string) tea.Cmd {
 	})
 }
 
+// openURLCmd launches a command to open the given URL, suspending the TUI if needed.
+func openURLCmd(url, browserCmd, youtrackCmd, gitlabCmd string) tea.Cmd {
+	lowerURL := strings.ToLower(url)
+	var cmdStr string
+	if strings.Contains(lowerURL, "youtrack") && youtrackCmd != "" {
+		cmdStr = youtrackCmd
+	} else if strings.Contains(lowerURL, "gitlab") && gitlabCmd != "" {
+		cmdStr = gitlabCmd
+	} else {
+		cmdStr = browserCmd
+	}
+
+	fields := strings.Fields(cmdStr)
+	if len(fields) == 0 {
+		return func() tea.Msg {
+			return MsgURLOpened{Err: fmt.Errorf("empty command configured")}
+		}
+	}
+
+	cmdName := fields[0]
+	var args []string
+	if len(fields) > 1 {
+		args = append(args, fields[1:]...)
+	}
+	args = append(args, url)
+
+	c := exec.Command(cmdName, args...)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return MsgURLOpened{Err: err}
+	})
+}
+
 // attachFileFromFilepathCmd asynchronously reads a file from disk, detects its content type,
 // and returns MsgFileAttached.
 func attachFileFromFilepathCmd(path string) tea.Cmd {
@@ -612,6 +644,9 @@ func main() {
 	// Load persisted notification mode and settings.
 	app.ChannelMsgRefreshMin = ResolveChannelMsgRefreshMin()
 	app.ExternalEditor = ResolveExternalEditor()
+	app.BrowserCommand = ResolveBrowserCommand()
+	app.YoutrackCommand = ResolveYoutrackCommand()
+	app.GitlabCommand = ResolveGitlabCommand()
 	if cfg := LoadConfig(); cfg != nil {
 		if cfg.NotificationMode != nil {
 			app.NotificationMode = *cfg.NotificationMode
