@@ -316,12 +316,14 @@ When `file_upload_enabled` is set to `true` in `config.json`, you can attach sma
 - A placeholder like `[File: filename.ext]` is inserted into the textarea. You can move, copy, or delete it to control inline message rendering.
 - When sending the message, files are automatically uploaded to OneDrive (for chats) or SharePoint (for channels) and attached as reference attachments to the message.
 
-### External Editor Composing
+### External Editor (Composing & Viewing)
 
-When in compose mode (`i`), you can press **`Ctrl+g`** to open an external editor (such as `vim`) to compose or edit your message:
-- The current content of the compose input field is saved to a temporary file and opened in the editor.
-- When you save and exit the editor, the edited text is loaded back into the compose input field.
-- The external editor command can be configured in your `config.json` via the `"external_editor"` option. If not specified, it falls back to the `$EDITOR` environment variable, then `$VISUAL` environment variable, and defaults to `"vim"`.
+You can use an external editor (such as `vim`, `neovim`, or `nano`) to either compose a new message or view an existing message:
+
+- **Composing/Editing**: When in compose mode (`i`), press **`Ctrl+g`** to open the external editor. The current input text is saved to a temporary file and loaded into the editor. When you save and exit, the TUI loads the changes back into the compose field.
+- **Viewing**: When in message mode (`m`) or message details popup (`v`), press **`Ctrl+g`** to open the selected message's full content in the external editor in read-only mode. Edits made in the editor are discarded when you exit, returning you directly to your previous position in the TUI.
+
+The external editor command can be configured in your `config.json` via the `"external_editor"` option. If not specified, it falls back to the `$EDITOR` environment variable, then `$VISUAL` environment variable, and defaults to `"vim"`.
 
 ---
 
@@ -342,7 +344,7 @@ When in compose mode (`i`), you can press **`Ctrl+g`** to open an external edito
 | `i`          | Enter compose mode                                        |
 | `Ctrl+V`     | Paste image from clipboard (in Compose Mode)              |
 | `Ctrl+f`     | Browse and attach file from computer (in Compose Mode)    |
-| `Ctrl+g`     | Compose/edit message in external editor (in Compose Mode)|
+| `Ctrl+g`     | Compose/edit message in external editor (in Compose Mode) |
 | `Enter`      | Send message                                              |
 | `Alt+Enter`  | New line in message                                       |
 | `Esc`        | Cancel compose                                            |
@@ -350,6 +352,7 @@ When in compose mode (`i`), you can press **`Ctrl+g`** to open an external edito
 | `?`          | Show help popup (keyboard reference + feature status)     |
 | `m`          | Enter/Exit **Message Mode** (to select/react/delete/copy) |
 | `v`          | View details/reactions of selected message (Message Mode) |
+| `Ctrl+g`     | View selected message in external editor (in Message Mode / Message View Popup) |
 | `Tab`        | Switch to attachment cursor in `v` popup (in Message View Popup) |
 | `Enter`      | Download selected attachment (in `v` attachment cursor)   |
 | `r`          | React to selected message (in Message Mode)               |

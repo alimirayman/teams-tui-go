@@ -183,8 +183,9 @@ type MsgChannelMessagesLoaded struct {
 
 // MsgEditorFinished is sent when the external editor exits.
 type MsgEditorFinished struct {
-	Content string
-	Err     error
+	Content  string
+	ReadOnly bool
+	Err      error
 }
 
 // MsgURLOpened is sent when a URL-opening command finishes.
@@ -1201,7 +1202,7 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 	case MsgEditorFinished:
 		if msg.Err != nil {
 			m.app.SetStatus("Editor error: "+msg.Err.Error(), 5*time.Second)
-		} else {
+		} else if !msg.ReadOnly {
 			m.textarea.SetValue(msg.Content)
 			m.app.InputBuffer = msg.Content
 			m.textarea.CursorEnd()
@@ -2033,7 +2034,7 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if editorCmd == "" {
 			editorCmd = "vim"
 		}
-		return m, openExternalEditorCmd(m.textarea.Value(), editorCmd)
+		return m, openExternalEditorCmd(m.textarea.Value(), editorCmd, false)
 
 	case "ctrl+f":
 		if m.app.Features.FileUpload {
@@ -2196,6 +2197,21 @@ func (m Model) handleMessagePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case "ctrl+g":
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			editorCmd := m.app.ExternalEditor
+			if editorCmd == "" {
+				editorCmd = "vim"
+			}
+			content := ""
+			if msgObj.Body != nil && msgObj.Body.Content != nil {
+				content = HTMLToMarkdown(*msgObj.Body.Content)
+			}
+			return m, openExternalEditorCmd(content, editorCmd, true)
+		}
+		return m, nil
+
 	case "enter":
 		if m.app.AttachmentCursorMode {
 			// Download/open selected attachment as xdg-open.
@@ -2339,6 +2355,21 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			} else {
 				m.app.SetStatus("Cannot delete messages from others", 3*time.Second)
 			}
+		}
+		return m, nil
+
+	case "ctrl+g":
+		if m.app.MessageSelectedIndex < len(m.app.Messages) {
+			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
+			editorCmd := m.app.ExternalEditor
+			if editorCmd == "" {
+				editorCmd = "vim"
+			}
+			content := ""
+			if msgObj.Body != nil && msgObj.Body.Content != nil {
+				content = HTMLToMarkdown(*msgObj.Body.Content)
+			}
+			return m, openExternalEditorCmd(content, editorCmd, true)
 		}
 		return m, nil
 
@@ -2920,7 +2951,7 @@ func (m Model) renderRightPanel(w, h int) string {
 					lipgloss.NewStyle().Foreground(colDimGray).Render("  (K/J:scroll, m:select, ?:help)")
 			}
 		} else if m.app.MessageSelectionMode {
-			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, o:open, d:delete, e:edit, a:answer, v:view, p:presence, i:profile, ESC/m:exit)"
+			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, o:open, d:delete, e:edit, a:answer, v:view, ctrl+g: editor, p:presence, i:profile, ESC/m:exit)"
 		}
 		msgContent := m.renderMessages(w, h-1)
 		return normalBorder.Width(w).Height(h).
@@ -5688,7 +5719,7 @@ func (m Model) renderMessagePopup(w, h int) string {
 		}
 	}
 
-	footer := lipgloss.NewStyle().Foreground(colDimGray).Italic(true).Render("Press ESC/q/v/Enter to close | j/k to navigate | J/K to scroll")
+	footer := lipgloss.NewStyle().Foreground(colDimGray).Italic(true).Render("Press ESC/q/v/Enter to close | j/k to navigate | J/K to scroll | ctrl+g to open in external editor")
 
 	nonBodyH := len(headerLines) + 1
 	if len(attachmentsLines) > 0 {
