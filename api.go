@@ -140,6 +140,28 @@ func sanitizeFilename(s string) string {
 	}, s)
 }
 
+func inlineImageName(alt string, counter int) string {
+	name := strings.TrimSpace(alt)
+	for _, marker := range []string{" class=", " src=", " style=", " loading=", " decoding="} {
+		if idx := strings.Index(strings.ToLower(name), marker); idx >= 0 {
+			name = name[:idx]
+		}
+	}
+	name = strings.TrimSpace(strings.TrimRight(name, "_-"))
+	if name == "" {
+		name = fmt.Sprintf("inline-image-%d", counter)
+	}
+	runes := []rune(name)
+	if len(runes) > 64 {
+		name = strings.TrimSpace(string(runes[:64]))
+	}
+	name = sanitizeFilename(name)
+	if !hasExtension(name) {
+		name += ".png"
+	}
+	return name
+}
+
 func ExtractInlineImages(htmlContent string) []MessageAttachment {
 	if htmlContent == "" {
 		return nil
@@ -165,15 +187,7 @@ func ExtractInlineImages(htmlContent string) []MessageAttachment {
 				}
 				if src != "" {
 					imgCounter++
-					name := alt
-					if name == "" {
-						name = fmt.Sprintf("inline-image-%d", imgCounter)
-					} else {
-						name = sanitizeFilename(name)
-					}
-					if !hasExtension(name) {
-						name += ".png"
-					}
+					name := inlineImageName(alt, imgCounter)
 					contentType := "image/png"
 
 					srcCopy := src

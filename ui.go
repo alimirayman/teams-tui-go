@@ -160,6 +160,14 @@ type MsgPreviewFinished struct {
 	Err error
 }
 
+type InlineImagePlacement struct {
+	CachePath string
+	Col       int
+	Row       int
+	Width     int
+	Height    int
+}
+
 // MsgTeamsChannelsLoaded is sent when the joined teams and their channels have been fetched.
 type MsgTeamsChannelsLoaded struct {
 	Teams []TeamWithChannels
@@ -292,6 +300,8 @@ type Model struct {
 
 	lastWrittenMessages  int
 	lastWrittenReactions int
+	previewDownloads     map[string]bool
+	previewFailures      map[string]bool
 }
 
 // NewModel creates the initial Bubble Tea model.
@@ -362,6 +372,8 @@ func NewModel(app *App, clientID, userID string) Model {
 		filepicker:           fp,
 		lastWrittenMessages:  -1,
 		lastWrittenReactions: -1,
+		previewDownloads:     make(map[string]bool),
+		previewFailures:      make(map[string]bool),
 	}
 }
 
@@ -974,6 +986,9 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 			m.applyPendingEdits(chat.ID)
 		}
 		m.updateScroll()
+		if previewCmd := m.queueInlineImagePreviews(4); previewCmd != nil {
+			cmds = append(cmds, previewCmd)
+		}
 
 	// ── More messages loaded (pagination) ───────────────────────────────
 	case MsgMoreMessagesLoaded:
@@ -1285,8 +1300,15 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case MsgPreviewDownloaded:
+		delete(m.previewDownloads, msg.DestPath)
 		if msg.Err != nil {
-			m.app.SetStatus("Preview error: "+msg.Err.Error(), 3*time.Second)
+			m.previewFailures[msg.DestPath] = true
+			if !msg.Silent {
+				m.app.SetStatus("Preview error: "+msg.Err.Error(), 3*time.Second)
+			}
+		}
+		if previewCmd := m.queueInlineImagePreviews(4); previewCmd != nil {
+			cmds = append(cmds, previewCmd)
 		}
 
 	// ── Teams channels loaded ───────────────────────────────────
@@ -1351,6 +1373,9 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 				m.app.Messages = msg.Messages
 				m.app.NextLink = msg.NextLink
 				m.app.SetLoadingMessages(false)
+				if previewCmd := m.queueInlineImagePreviews(4); previewCmd != nil {
+					cmds = append(cmds, previewCmd)
+				}
 			}
 
 			// Update lastMsgID and lastMsgTime
@@ -2772,23 +2797,20 @@ func (m Model) View() string {
 	}
 
 	chatW := chatPanelWidth(m.width)
-	msgW := msgPanelWidth(m.width)
-	// Account for borders on both panels.
-	innerH := m.height - 5 // subtract status bar (3) + border rows (2)
-	if innerH < 1 {
-		innerH = 1
+	msgW := m.width - chatW - 2
+	contentH := m.height - 1
+	if contentH < 1 {
+		contentH = 1
 	}
 
-	chatPanel := m.renderChatList(chatW-2, innerH)
-
-	right := m.renderRightPanel(msgW-2, innerH)
-
-	left := normalBorder.Width(chatW - 2).Height(innerH).Render(chatPanel)
-
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	mainView := lipgloss.JoinVertical(lipgloss.Left, top, m.renderStatusBar(m.width))
+	left := m.renderChatList(chatW, contentH)
+	right := m.renderRightPanel(msgW, contentH)
+	separator := lipgloss.NewStyle().Foreground(colGreen).Render("│")
+	top := joinColumns(left, chatW, separator, right, msgW, contentH)
+	mainView := top + "\n" + m.renderStatusBar(m.width)
 
 	var result string
+	showMainView := false
 	if m.app.UrlSelectionMode {
 		modal := m.renderUrlSelection(m.width, m.height)
 		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
@@ -2877,9 +2899,13 @@ func (m Model) View() string {
 		result = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal)
 	} else {
 		result = mainView
+		showMainView = true
 	}
 
 	var kittySeq string
+	if m.app.Features.FilePreviewInTerminal {
+		kittySeq = "\x1b_Ga=d,d=a\x1b\\"
+	}
 	if m.app.MessagePopupMode && m.app.Features.FilePreviewInTerminal && m.app.AttachmentCursorMode {
 		if m.app.MessageSelectedIndex >= 0 && m.app.MessageSelectedIndex < len(m.app.Messages) {
 			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
@@ -2928,13 +2954,28 @@ func (m Model) View() string {
 								imgH := (innerH - 1) - 2 // targetH - 2
 
 								// Clear all, then draw image
-								kittySeq = "\x1b_Ga=d,d=a\x1b\\" + kittyImageSequence(cp, imgX, imgY, imgW, imgH)
+								kittySeq += kittyImageSequence(cp, imgX, imgY, imgW, imgH)
 							}
 						}
 					}
 				}
 			}
 		}
+	} else if showMainView && m.app.Features.FilePreviewInTerminal {
+		var media strings.Builder
+		for _, placement := range m.app.InlineImagePlacements {
+			if _, err := os.Stat(placement.CachePath); err != nil {
+				continue
+			}
+			media.WriteString(kittyImageSequence(
+				placement.CachePath,
+				chatW+1+placement.Col,
+				1+placement.Row,
+				placement.Width,
+				placement.Height,
+			))
+		}
+		kittySeq += media.String()
 	}
 
 	result = fitFrame(result, m.width, m.height)
@@ -2945,15 +2986,11 @@ func (m Model) View() string {
 func (m Model) renderRightPanel(w, h int) string {
 	if m.app.SelectedIndex < 0 && m.channelSelectedIndex < 0 {
 		idleMsg := "💤 Sleep Mode\n\nNo chat selected. Polling is paused.\n\nPress 'j' or 'k' to select a chat\nand resume polling."
-		msgContent := lipgloss.Place(w, h-2, lipgloss.Center, lipgloss.Center,
-			lipgloss.NewStyle().Foreground(colDimGray).Align(lipgloss.Center).Render(idleMsg),
+		return fitBlock(
+			lipgloss.NewStyle().Foreground(colDimGray).Render("Idle")+"\n\n"+idleMsg,
+			w,
+			h,
 		)
-		return normalBorder.Width(w).Height(h).
-			BorderForeground(colDimGray).
-			Render(lipgloss.JoinVertical(lipgloss.Left,
-				lipgloss.NewStyle().Foreground(colDimGray).Render("Idle"),
-				msgContent,
-			))
 	}
 
 	if !m.app.InputMode {
@@ -2970,13 +3007,11 @@ func (m Model) renderRightPanel(w, h int) string {
 			title = "MESSAGE MODE (j/k:nav, r:react, y:yank, u:url, o:open, d:delete, e:edit, a:answer, v:view, ctrl+g: editor, p:presence, i:profile, ESC/m:exit)"
 		}
 		msgContent := m.renderMessages(w, h-1)
-		return normalBorder.Width(w).Height(h).
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(colGreen).
-			Render(lipgloss.JoinVertical(lipgloss.Left,
-				fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(title), w),
-				msgContent,
-			))
+		return fitBlock(
+			fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(title), w)+"\n"+msgContent,
+			w,
+			h,
+		)
 	}
 
 	// Input mode: split height between messages and textarea.
@@ -3058,11 +3093,11 @@ func (m Model) renderRightPanel(w, h int) string {
 		}
 		title = "REPLYING TO " + sender + " (ESC to cancel)"
 	}
-	msgBox := normalBorder.Width(w).Height(msgH).
-		Render(lipgloss.JoinVertical(lipgloss.Left,
-			fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(title), w),
-			msgContent,
-		))
+	msgBox := fitBlock(
+		fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(title), w)+"\n"+msgContent,
+		w,
+		msgH,
+	)
 
 	m.textarea.SetWidth(w)
 	m.textarea.SetHeight(inputH - 2)
@@ -3108,16 +3143,13 @@ func (m Model) renderRightPanel(w, h int) string {
 
 	inputParts = append(inputParts, m.textarea.View())
 
-	inputBox := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colGreen).
-		Width(w).Height(inputH - 1).
-		Render(lipgloss.JoinVertical(lipgloss.Left, inputParts...))
+	inputParts = append([]string{lipgloss.NewStyle().Foreground(colGreen).Render(strings.Repeat("─", w))}, inputParts...)
+	inputBox := fitBlock(strings.Join(inputParts, "\n"), w, inputH)
 
 	if mentionView != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, msgBox, mentionView, inputBox)
+		return fitBlock(msgBox+"\n"+mentionView+"\n"+inputBox, w, h)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, msgBox, inputBox)
+	return fitBlock(msgBox+"\n"+inputBox, w, h)
 }
 
 // ---------------------------------------------------------------------------
@@ -3381,8 +3413,7 @@ func (m Model) renderChatList(w, h int) string {
 				Foreground(colYellow).
 				Bold(unread || reactionEmoji != "").
 				Background(colDarkGray).
-				Width(w).
-				Render(fitLine(labelStr, w))
+				Render(padRight(fitLine(labelStr, w), w))
 		} else {
 			typeTag := lipgloss.NewStyle().Foreground(colCyan).Render(chatTypeIcon)
 			base := typeTag + " " + displayName
@@ -3478,8 +3509,7 @@ func (m Model) renderChatList(w, h int) string {
 						Foreground(colYellow).
 						Background(colDarkGray).
 						Bold(unread).
-						Width(w).
-						Render(fitLine(prefix+"# "+entry.teamName+" » "+entry.channelName, w))
+						Render(padRight(fitLine(prefix+"# "+entry.teamName+" » "+entry.channelName, w), w))
 				} else {
 					var textStyle lipgloss.Style
 					if isHidden {
@@ -3514,6 +3544,7 @@ func (m Model) renderChatList(w, h int) string {
 // ---------------------------------------------------------------------------
 
 func (m Model) renderMessages(w, h int) string {
+	m.app.InlineImagePlacements = nil
 	if m.app.LoadingMessages && len(m.app.Messages) == 0 {
 		return lipgloss.NewStyle().Foreground(colDimGray).Render("Loading messages...")
 	}
@@ -3534,6 +3565,7 @@ func (m Model) renderMessages(w, h int) string {
 
 	var selectedStartLine, selectedEndLine int = -1, -1
 	var pendingScrollLine int = -1
+	var imagePlacements []InlineImagePlacement
 
 	m.app.MessageLineOffsets = make([]int, len(msgs))
 
@@ -3680,7 +3712,7 @@ func (m Model) renderMessages(w, h int) string {
 		if alignRight {
 			maxMsgW := 0
 			for _, l := range msgLines {
-				lw := lipgloss.Width(l)
+				lw := cellWidth(l)
 				if lw > maxMsgW {
 					maxMsgW = lw
 				}
@@ -3702,10 +3734,64 @@ func (m Model) renderMessages(w, h int) string {
 				content = lipgloss.NewStyle().
 					Background(colDarkGray).
 					Foreground(colYellow).
-					Width(w).
-					Render(content)
+					Render(padRight(fitLine(content, w), w))
 			}
 			lines = append(lines, content)
+		}
+
+		if m.app.Features.FilePreviewInTerminal && w >= 40 {
+			imageCount := 0
+			for _, att := range viewableAttachments(msg) {
+				if !isImageAttachment(att) {
+					continue
+				}
+				imageCount++
+				if imageCount > 3 {
+					break
+				}
+
+				resolvedAtt := m.resolvedAttachment(msg, att)
+				cachePath, err := getAttachmentCachePath(resolvedAtt)
+				if err != nil {
+					continue
+				}
+				thumbW := maxW
+				if thumbW > 48 {
+					thumbW = 48
+				}
+				thumbH := 10
+				col := len(replyIndent)
+				if alignRight {
+					col = w - thumbW
+				}
+				if col < 0 {
+					col = 0
+				}
+
+				row := len(lines)
+				loading := ""
+				if _, err := os.Stat(cachePath); err != nil {
+					name := "image"
+					if att.Name != nil && strings.TrimSpace(*att.Name) != "" {
+						name = strings.TrimSpace(*att.Name)
+					}
+					loading = lipgloss.NewStyle().Foreground(colDimGray).Render("Loading " + name + "…")
+				}
+				for imageRow := 0; imageRow < thumbH; imageRow++ {
+					line := ""
+					if imageRow == 0 {
+						line = loading
+					}
+					lines = append(lines, strings.Repeat(" ", col)+fitLine(line, thumbW))
+				}
+				imagePlacements = append(imagePlacements, InlineImagePlacement{
+					CachePath: cachePath,
+					Col:       col,
+					Row:       row,
+					Width:     thumbW,
+					Height:    thumbH,
+				})
+			}
 		}
 		if isSelected {
 			selectedEndLine = len(lines)
@@ -3780,6 +3866,13 @@ func (m Model) renderMessages(w, h int) string {
 		start2 = len(lines)
 	}
 
+	for _, placement := range imagePlacements {
+		if placement.Row >= start2 && placement.Row+placement.Height <= end {
+			placement.Row -= start2
+			m.app.InlineImagePlacements = append(m.app.InlineImagePlacements, placement)
+		}
+	}
+
 	return strings.Join(fitLines(lines[start2:end], w), "\n")
 }
 
@@ -3788,19 +3881,14 @@ func (m Model) renderMessages(w, h int) string {
 // ---------------------------------------------------------------------------
 
 func (m Model) renderStatusBar(w int) string {
+	style := lipgloss.NewStyle().Foreground(colGreen).Background(lipgloss.Color("#202020"))
 	if m.app.DeleteConfirmMode {
-		return bellBorder.Width(w - 2).Height(1).Render(
-			lipgloss.NewStyle().Foreground(colRed).Bold(true).Render(
-				"DELETE MESSAGE? (y:yes / n:no)",
-			),
-		)
+		return lipgloss.NewStyle().Foreground(colRed).Background(lipgloss.Color("#202020")).Bold(true).
+			Render(padRight(" DELETE MESSAGE? (y:yes / n:no)", w-1))
 	}
 	if m.app.ReactionMode {
-		return normalBorder.Width(w - 2).Height(1).Render(
-			lipgloss.NewStyle().Foreground(colYellow).Render(
-				"REACT: 1:👍 2:❤️ 3:😂 4:😮 5:😢 6:😡 (ESC:cancel)",
-			),
-		)
+		return lipgloss.NewStyle().Foreground(colYellow).Background(lipgloss.Color("#202020")).
+			Render(padRight(" REACT: 1:👍 2:❤️ 3:😂 4:😮 5:😢 6:😡 (ESC:cancel)", w-1))
 	}
 	parts := []string{m.app.Status}
 	if hint := m.statusHint(); hint != "" {
@@ -3811,13 +3899,11 @@ func (m Model) renderStatusBar(w int) string {
 	if m.app.LoadingMessages && len(m.app.Messages) > 0 {
 		text = "⏳ Loading older messages... | " + text
 	}
-	text = fitLine(text, w-4)
+	text = fitLine(" "+text, w-1)
 	if m.app.VisualBellActive() {
-		return bellBorder.Width(w - 2).Height(1).Render(text)
+		style = style.Background(lipgloss.Color("#5F0000")).Foreground(colWhite).Bold(true)
 	}
-	return normalBorder.Width(w - 2).Height(1).Render(
-		lipgloss.NewStyle().Foreground(colGreen).Render(text),
-	)
+	return style.Render(padRight(text, w-1))
 }
 
 func (m Model) statusHint() string {
@@ -3875,10 +3961,49 @@ func fitLine(s string, width int) string {
 		return ""
 	}
 	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
-	if ansi.StringWidth(s) <= width {
+	if cellWidth(s) <= width {
 		return s
 	}
-	return ansi.Truncate(s, width, "…")
+	return truncateCells(s, width, "…")
+}
+
+func cellWidth(s string) int {
+	return ansi.StringWidthWc(s)
+}
+
+func truncateCells(s string, width int, tail string) string {
+	if width <= 0 {
+		return ""
+	}
+	if cellWidth(s) <= width {
+		return s
+	}
+
+	tailWidth := cellWidth(tail)
+	limit := width - tailWidth
+	if limit < 0 {
+		return ""
+	}
+
+	var out strings.Builder
+	used := 0
+	state := byte(0)
+	for len(s) > 0 {
+		seq, seqWidth, n, newState := ansi.WcWidth.DecodeSequenceInString(s, state, nil)
+		if n <= 0 {
+			break
+		}
+		if seqWidth > 0 && used+seqWidth > limit {
+			break
+		}
+		out.WriteString(seq)
+		used += seqWidth
+		s = s[n:]
+		state = newState
+	}
+	out.WriteString(tail)
+	out.WriteString("\x1b[0m")
+	return out.String()
 }
 
 func fitLines(lines []string, width int) []string {
@@ -3909,12 +4034,51 @@ func fitFrame(s string, width, height int) string {
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	return strings.Join(fitLines(lines, frameWidth), "\n")
+	for i := range lines {
+		lines[i] = truncateCells(lines[i], frameWidth, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func padRight(s string, width int) string {
+	s = fitLine(s, width)
+	if pad := width - cellWidth(s); pad > 0 {
+		return s + strings.Repeat(" ", pad)
+	}
+	return s
+}
+
+func fitBlock(s string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	for i := range lines {
+		lines[i] = padRight(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func joinColumns(left string, leftWidth int, separator, right string, rightWidth, height int) string {
+	leftLines := strings.Split(fitBlock(left, leftWidth, height), "\n")
+	rightLines := strings.Split(fitBlock(right, rightWidth, height), "\n")
+	sep := fitLine(separator, 1)
+	lines := make([]string, height)
+	for i := range height {
+		lines[i] = leftLines[i] + sep + rightLines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // padLeft right-aligns text within width w by prepending spaces.
 func padLeft(s string, w int) string {
-	visLen := lipgloss.Width(s)
+	visLen := cellWidth(s)
 	pad := w - visLen
 	if pad <= 0 {
 		return s
@@ -3926,10 +4090,7 @@ func wordWrap(s string, maxW int) []string {
 	if maxW <= 0 {
 		return []string{s}
 	}
-	// Use lipgloss to perform ANSI-aware wrapping. lipgloss (via reflow)
-	// correctly handles repeating escape sequences (like OSC 8 links) across
-	// line breaks.
-	res := lipgloss.NewStyle().Width(maxW).Render(s)
+	res := ansi.WcWidth.Wrap(s, maxW, " ")
 	lines := strings.Split(res, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " ")
@@ -6703,7 +6864,7 @@ func (m Model) checkAndTriggerPreviewDownload() tea.Cmd {
 	}
 
 	// Download in background
-	return downloadPreviewCmd(m.clientID, fileURL, cachePath)
+	return downloadPreviewCmd(m.clientID, fileURL, cachePath, false)
 }
 
 func (m Model) attachmentContentURL(msg Message, att MessageAttachment) string {
@@ -6728,6 +6889,66 @@ func (m Model) resolvedAttachment(msg Message, att MessageAttachment) MessageAtt
 		att.ContentURL = &fileURL
 	}
 	return att
+}
+
+func (m *Model) queueInlineImagePreviews(limit int) tea.Cmd {
+	if !m.app.Features.FilePreviewInTerminal || limit <= 0 {
+		return nil
+	}
+	if m.previewDownloads == nil {
+		m.previewDownloads = make(map[string]bool)
+	}
+	if m.previewFailures == nil {
+		m.previewFailures = make(map[string]bool)
+	}
+
+	var cmds []tea.Cmd
+	queued := 0
+	for i := range m.app.Messages {
+		m.app.Messages[i].ProcessInlineImages()
+		msg := m.app.Messages[i]
+		for _, att := range viewableAttachments(msg) {
+			if !isImageAttachment(att) {
+				continue
+			}
+			fileURL := m.attachmentContentURL(msg, att)
+			if fileURL == "" || strings.HasPrefix(fileURL, "../") {
+				continue
+			}
+			resolvedAtt := att
+			resolvedAtt.ContentURL = &fileURL
+			cachePath, err := getAttachmentCachePath(resolvedAtt)
+			if err != nil {
+				continue
+			}
+			if _, err := os.Stat(cachePath); err == nil || m.previewDownloads[cachePath] || m.previewFailures[cachePath] {
+				continue
+			}
+			m.previewDownloads[cachePath] = true
+			cmds = append(cmds, downloadPreviewCmd(m.clientID, fileURL, cachePath, true))
+			queued++
+			if queued >= limit {
+				return tea.Batch(cmds...)
+			}
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func combineCommands(cmds ...tea.Cmd) tea.Cmd {
+	filtered := cmds[:0]
+	for _, cmd := range cmds {
+		if cmd != nil {
+			filtered = append(filtered, cmd)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return tea.Batch(filtered...)
 }
 
 // getCursorPos calculates the absolute cursor index in runes inside the textarea's value.
@@ -6834,10 +7055,10 @@ func (m Model) loadChatMessages(chatID string, chatIndex int) (Model, tea.Cmd) {
 			m.app.SnapToBottom = true
 			if m.app.ChatCacheDirty[chatID] {
 				m.app.SetLoadingMessages(true)
-				return m, loadMessagesCmd(m.clientID, chatID, chatIndex)
+				return m, combineCommands(loadMessagesCmd(m.clientID, chatID, chatIndex), m.queueInlineImagePreviews(4))
 			}
 			m.app.SetLoadingMessages(false)
-			return m, nil
+			return m, m.queueInlineImagePreviews(4)
 		}
 	}
 
@@ -6855,7 +7076,7 @@ func (m Model) loadChatMessages(chatID string, chatIndex int) (Model, tea.Cmd) {
 			m.app.SnapToBottom = true
 			m.app.ChatMessagesLoadedOnce[chatID] = true
 			// Still fetch the latest messages in the background to update the DB and cache!
-			return m, loadMessagesCmd(m.clientID, chatID, chatIndex)
+			return m, combineCommands(loadMessagesCmd(m.clientID, chatID, chatIndex), m.queueInlineImagePreviews(4))
 		}
 	}
 
@@ -6871,7 +7092,7 @@ func (m Model) loadChatMessages(chatID string, chatIndex int) (Model, tea.Cmd) {
 		m.app.SetLoadingMessages(true)
 		m.app.SnapToBottom = true
 	}
-	return m, loadMessagesCmd(m.clientID, chatID, chatIndex)
+	return m, combineCommands(loadMessagesCmd(m.clientID, chatID, chatIndex), m.queueInlineImagePreviews(4))
 }
 
 func (m Model) loadChannelMessages(teamID string, channelID string) (Model, tea.Cmd) {
@@ -6882,7 +7103,7 @@ func (m Model) loadChannelMessages(teamID string, channelID string) (Model, tea.
 		m.app.NextLink = m.app.CachedNextLink[channelID]
 		m.app.SetLoadingMessages(false)
 		m.app.SnapToBottom = true
-		return m, nil
+		return m, m.queueInlineImagePreviews(4)
 	}
 
 	// 2. If SQLite enabled, check DB
@@ -6898,7 +7119,7 @@ func (m Model) loadChannelMessages(teamID string, channelID string) (Model, tea.
 			m.app.SetLoadingMessages(false)
 			m.app.SnapToBottom = true
 			// Still fetch the latest messages in the background to update the DB and cache!
-			return m, loadChannelMessagesCmd(m.clientID, teamID, channelID)
+			return m, combineCommands(loadChannelMessagesCmd(m.clientID, teamID, channelID), m.queueInlineImagePreviews(4))
 		}
 	}
 
@@ -6907,7 +7128,7 @@ func (m Model) loadChannelMessages(teamID string, channelID string) (Model, tea.
 	m.app.NextLink = ""
 	m.app.SetLoadingMessages(true)
 	m.app.SnapToBottom = true
-	return m, loadChannelMessagesCmd(m.clientID, teamID, channelID)
+	return m, combineCommands(loadChannelMessagesCmd(m.clientID, teamID, channelID), m.queueInlineImagePreviews(4))
 }
 
 func (m Model) renderFilePickerPopup(w, h int) string {

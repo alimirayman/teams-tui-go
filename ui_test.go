@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/charmbracelet/x/ansi"
 )
 
 func testStringPtr(s string) *string { return &s }
@@ -19,11 +17,84 @@ func TestFitLineFlattensEmbeddedNewlines(t *testing.T) {
 
 func TestFitLinePreservesBengaliGraphemeBoundaries(t *testing.T) {
 	got := fitLine("আমাদের রোগীদের স্বাস্থ্যসেবা নিশ্চিত করতে হবে", 16)
-	if width := ansi.StringWidth(got); width > 16 {
+	if width := cellWidth(got); width > 16 {
 		t.Fatalf("Bengali line width = %d, want <= 16: %q", width, got)
 	}
 	if strings.ContainsRune(got, '\uFFFD') {
 		t.Fatalf("Bengali line contains a broken UTF-8 replacement rune: %q", got)
+	}
+}
+
+func TestJoinColumnsUsesLegacyCellWidth(t *testing.T) {
+	left := "বাংলা চ্যানেল"
+	right := "বাংলা বার্তা"
+	got := joinColumns(left, 18, "│", right, 24, 1)
+	if width := cellWidth(got); width != 43 {
+		t.Fatalf("joined width = %d, want 43: %q", width, got)
+	}
+	if strings.Count(got, "│") != 1 {
+		t.Fatalf("expected one fixed divider: %q", got)
+	}
+}
+
+func TestMainViewKeepsBengaliInsideFixedColumns(t *testing.T) {
+	chatName := "বাংলা চ্যানেল এবং হাসপাতালের আলোচনা"
+	body := "আমাদের রোগীদের জন্য সঠিক চিকিৎসা নিশ্চিত করতে এই বার্তাটি লেখা হয়েছে।"
+	currentUser := "Current User"
+	app := NewApp()
+	app.CurrentUserName = &currentUser
+	app.SelectedIndex = 0
+	app.Chats = []Chat{{ID: "chat-id", CachedDisplayName: &chatName}}
+	app.Messages = []Message{{
+		ID:              "message-id",
+		CreatedDateTime: "2026-07-10T00:00:00Z",
+		Body:            &MessageBody{Content: &body},
+	}}
+
+	model := NewModel(app, "client-id", "user-id")
+	model.width = 100
+	model.height = 24
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("view height = %d, want 24", len(lines))
+	}
+	for i, line := range lines {
+		if width := cellWidth(line); width > 99 {
+			t.Fatalf("line %d width = %d, want <= 99: %q", i, width, line)
+		}
+	}
+}
+
+func TestRenderMessagesReservesInlineImageRows(t *testing.T) {
+	name := "diagram.png"
+	contentType := "image/png"
+	contentURL := "https://example.com/diagram.png"
+	body := "Architecture diagram"
+	chatName := "Design"
+	app := NewApp()
+	app.SelectedIndex = 0
+	app.Features.FilePreviewInTerminal = true
+	app.Chats = []Chat{{ID: "chat-id", CachedDisplayName: &chatName}}
+	app.Messages = []Message{{
+		ID:              "message-id",
+		CreatedDateTime: "2026-07-10T00:00:00Z",
+		Body:            &MessageBody{Content: &body},
+		Attachments: []MessageAttachment{{
+			ID:          "image-id",
+			Name:        &name,
+			ContentType: &contentType,
+			ContentURL:  &contentURL,
+		}},
+	}}
+
+	model := NewModel(app, "client-id", "user-id")
+	_ = model.renderMessages(80, 24)
+	if len(app.InlineImagePlacements) != 1 {
+		t.Fatalf("inline image placements = %d, want 1", len(app.InlineImagePlacements))
+	}
+	if got := app.InlineImagePlacements[0].Height; got != 10 {
+		t.Fatalf("thumbnail height = %d, want 10", got)
 	}
 }
 
@@ -34,7 +105,7 @@ func TestFitFrameReservesWrapColumn(t *testing.T) {
 		t.Fatalf("expected 2 frame lines, got %d: %q", len(lines), got)
 	}
 	for i, line := range lines {
-		if w := ansi.StringWidth(line); w > 9 {
+		if w := cellWidth(line); w > 9 {
 			t.Fatalf("line %d width = %d, want <= 9: %q", i, w, line)
 		}
 	}

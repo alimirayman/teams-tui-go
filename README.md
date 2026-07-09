@@ -34,7 +34,7 @@ Authenticates via **OAuth2 Device Code Flow** (no browser redirect needed), fetc
 **Optional features** (enable per-feature in `config.json`; see [AZURE_SETUP.md](AZURE_SETUP.md)):
 - 📎 **File Preview & Download** (`file_preview_enabled`) — Tab through attachments in the message popup and press Enter to download them to `~/Downloads/`
   - **Terminal Image Preview** (`file_preview_in_terminal`) — Displays the highlighted image attachment directly inside the details popup on the right side using the Kitty Graphics Protocol (requires `file_preview_enabled: true`)
-  - Press **`v`** in the normal chat/channel view to preview the newest loaded image immediately, or use **`m`**, select a message, then **`v`** to preview that message's image
+  - Image attachments render automatically as cached thumbnails in the message timeline. Press **`v`** for the newest image, or use **`m`**, select a message, then **`v`** for a larger preview
 - ⬆️ **File Browsing & Uploading** (`file_upload_enabled`) — Press `Ctrl+f` in compose mode to open a file browser and attach small files (up to 50MB) from your computer. Files are uploaded to OneDrive/SharePoint and attached to your message.
 - 🟢 **User Presence** (`presence_enabled`) — press `p` in message selection mode to see real-time availability of the message sender
 - 👤 **User Profile** (`user_profile_enabled`) — press `i` in message selection mode to view extended profile info (name, email, job title, department)

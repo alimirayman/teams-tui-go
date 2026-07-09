@@ -171,12 +171,18 @@ func TestExtractAndProcessInlineImages(t *testing.T) {
 	}
 }
 
+func TestInlineImageNameDropsLeakedHTMLAttributes(t *testing.T) {
+	got := inlineImageName("Architecture diagram_ class=border loading=eager src=https://example.com/huge.png", 1)
+	if got != "Architecture diagram.png" {
+		t.Fatalf("inline image name = %q", got)
+	}
+}
+
 func TestHTMLToTextMentions(t *testing.T) {
 	// Force color profile for testing ANSI codes
 	oldProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(oldProfile)
-
 
 	// Helper functions for pointers
 	intPtr := func(v int) *int { return &v }
@@ -394,6 +400,3 @@ func TestFilterMessageAttachments(t *testing.T) {
 		}
 	}
 }
-
-
-

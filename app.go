@@ -167,6 +167,7 @@ type App struct {
 	// ── Attachment cursor in message view popup (Feature: file_preview_enabled) ──
 	AttachmentSelectedIndex int
 	AttachmentCursorMode    bool // true when navigating attachments inside the v popup
+	InlineImagePlacements   []InlineImagePlacement
 
 	// ── Teams channels data (Feature: teams_channels_enabled) ───────────
 	TeamsData             []TeamWithChannels // cached joined teams + channels; populated at startup

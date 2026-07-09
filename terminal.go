@@ -9,7 +9,6 @@ import (
 const (
 	beginSynchronizedOutput = "\x1b[?2026h"
 	endSynchronizedOutput   = "\x1b[?2026l"
-	enableGraphemeClusters  = "\x1b[?2027h"
 	disableGraphemeClusters = "\x1b[?2027l"
 )
 

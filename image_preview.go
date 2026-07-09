@@ -75,17 +75,18 @@ func getAttachmentCachePath(att MessageAttachment) (string, error) {
 type MsgPreviewDownloaded struct {
 	DestPath string
 	Err      error
+	Silent   bool
 }
 
 // downloadPreviewCmd downloads a file attachment to cache silently.
-func downloadPreviewCmd(clientID, fileURL, destPath string) tea.Cmd {
+func downloadPreviewCmd(clientID, fileURL, destPath string, silent bool) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
-			return MsgPreviewDownloaded{Err: err}
+			return MsgPreviewDownloaded{DestPath: destPath, Err: err, Silent: silent}
 		}
 		err = DownloadFile(token, fileURL, destPath)
-		return MsgPreviewDownloaded{DestPath: destPath, Err: err}
+		return MsgPreviewDownloaded{DestPath: destPath, Err: err, Silent: silent}
 	}
 }
 

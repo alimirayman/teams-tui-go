@@ -778,10 +778,10 @@ func main() {
 	model = model.rebuildChatList()
 	model = model.writeAppState()
 
-	// Match the grapheme-aware width calculations used by Lip Gloss. This is
-	// especially important for Indic scripts, whose combining characters and
-	// conjuncts otherwise advance differently in the terminal and renderer.
-	_ = writeTerminalSequence(os.Stdout, enableGraphemeClusters)
+	// cmux and other legacy-width terminals advance Indic scripts by rune
+	// width. Keep grapheme-cluster mode disabled so terminal advancement matches
+	// the wcwidth-based layout used by the main view.
+	_ = writeTerminalSequence(os.Stdout, disableGraphemeClusters)
 	cleanupTerminal := func() {
 		_ = writeTerminalSequence(os.Stdout, "\x1b_Ga=d,d=a\x1b\\"+disableGraphemeClusters)
 	}
