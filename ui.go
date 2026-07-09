@@ -2465,6 +2465,13 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.app.MessagePopupScrollOffset = 0
 			m.app.AttachmentCursorMode = false
 			m.app.AttachmentSelectedIndex = 0
+			if m.app.Features.FilePreviewInTerminal {
+				if idx, ok := firstPreviewableImageAttachmentIndex(m.app.Messages[m.app.MessageSelectedIndex]); ok {
+					m.app.AttachmentCursorMode = true
+					m.app.AttachmentSelectedIndex = idx
+					return m, m.checkAndTriggerPreviewDownload()
+				}
+			}
 		}
 		return m, nil
 
@@ -2926,6 +2933,7 @@ func (m Model) View() string {
 		}
 	}
 
+	result = fitFrame(result, m.width, m.height)
 	return result + kittySeq
 }
 
@@ -3370,8 +3378,7 @@ func (m Model) renderChatList(w, h int) string {
 				Bold(unread || reactionEmoji != "").
 				Background(colDarkGray).
 				Width(w).
-				MaxWidth(w).
-				Render(labelStr)
+				Render(fitLine(labelStr, w))
 		} else {
 			typeTag := lipgloss.NewStyle().Foreground(colCyan).Render(chatTypeIcon)
 			base := typeTag + " " + displayName
@@ -3389,7 +3396,7 @@ func (m Model) renderChatList(w, h int) string {
 				}
 				base = lipgloss.NewStyle().Bold(true).Render(pfx) + base
 			}
-			label = lipgloss.NewStyle().MaxWidth(w).Render(base)
+			label = fitLine(base, w)
 		}
 		lines = append(lines, label)
 	}
@@ -3468,8 +3475,7 @@ func (m Model) renderChatList(w, h int) string {
 						Background(colDarkGray).
 						Bold(unread).
 						Width(w).
-						MaxWidth(w).
-						Render(prefix + "# " + entry.teamName + " » " + entry.channelName)
+						Render(fitLine(prefix+"# "+entry.teamName+" » "+entry.channelName, w))
 				} else {
 					var textStyle lipgloss.Style
 					if isHidden {
@@ -3489,7 +3495,7 @@ func (m Model) renderChatList(w, h int) string {
 					}
 
 					labelStr := prefix + icon + " " + entry.teamName + " » " + entry.channelName
-					label = textStyle.MaxWidth(w).Render(labelStr)
+					label = textStyle.Render(fitLine(labelStr, w))
 				}
 				lines = append(lines, label)
 			}
@@ -3864,6 +3870,7 @@ func fitLine(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
+	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
 	if ansi.StringWidth(s) <= width {
 		return s
 	}
@@ -3876,6 +3883,29 @@ func fitLines(lines []string, width int) []string {
 		out[i] = fitLine(line, width)
 	}
 	return out
+}
+
+func fitFrame(s string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	// Keep one column spare. Several terminals auto-wrap after writing the last
+	// column, and complex scripts can disagree with Go's width calculation by a
+	// cell. Reserving a column prevents those wraps from corrupting the layout.
+	frameWidth := width - 1
+	if frameWidth < 1 {
+		frameWidth = 1
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(fitLines(lines, frameWidth), "\n")
 }
 
 // padLeft right-aligns text within width w by prepending spaces.
@@ -5686,6 +5716,16 @@ func viewableAttachments(msg Message) []MessageAttachment {
 	return out
 }
 
+func firstPreviewableImageAttachmentIndex(msg Message) (int, bool) {
+	vAtts := viewableAttachments(msg)
+	for i, att := range vAtts {
+		if isImageAttachment(att) && att.ContentURL != nil && *att.ContentURL != "" {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func (m Model) renderMessagePopup(w, h int) string {
 	if len(m.app.Messages) == 0 || m.app.MessageSelectedIndex < 0 || m.app.MessageSelectedIndex >= len(m.app.Messages) {
 		return ""
@@ -5927,6 +5967,7 @@ func (m Model) renderMessagePopup(w, h int) string {
 			previewText = "\n⏳ Loading preview..."
 		} else {
 			borderColor = colGreen
+			previewText = "\nImage preview\nEnter: download/open"
 		}
 
 		rightPanelStr := lipgloss.NewStyle().
