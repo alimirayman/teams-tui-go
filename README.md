@@ -1,420 +1,378 @@
-# teams-tui-go
+# teams
 
-A keyboard-driven terminal UI client for Microsoft Teams, written in Go.
+A keyboard-first Microsoft Teams client for the terminal, built for fast chat and channel navigation with Go, Bubble Tea, and Microsoft Graph.
 
-Authenticates via **OAuth2 Device Code Flow** (no browser redirect needed), fetches your chats and messages from the **Microsoft Graph API**, and displays them in a fast, minimal TUI.
+This repository is the [`alimirayman/teams-tui-go`](https://github.com/alimirayman/teams-tui-go) fork. It includes a redesigned, Unicode-safe timeline; inline image support for Kitty-compatible terminals and cmux; Adaptive Card rendering; attachment upload/download; cmux notifications; Saved Messages discovery; and Teams call handoff.
 
----
+## Capabilities
 
-## Features
+| Area | Support |
+| --- | --- |
+| Chats | One-to-one, group, meeting, bot, and Saved Messages conversations |
+| Channels | Browse, read, post, reply, edit, delete, react, search, and mention users |
+| Rendering | Unicode/Bangla-safe wrapping, Markdown, HTML, code blocks, mentions, reactions, Adaptive Cards, links, images, and files |
+| Compose | Multiline messages, Markdown, replies, mentions, clipboard images, local files, and external editor |
+| Files | Timeline thumbnails, terminal previews, downloads, and uploads up to 50 MB |
+| Navigation | Stable activity ordering, favourites, unread markers, history search, long-message collapse, and sleep mode |
+| Notifications | Console bell, native desktop notifications, or cmux-native notifications with previews |
+| Calls | One-key handoff to official Teams audio or video calls |
 
-- 🔐 OAuth2 Device Code Flow — authenticate with your Microsoft account, no browser redirect required
-- 💬 List all your Teams chats (1:1, group, meetings) with computed display names
-- 📨 View messages in any chat with HTML-to-text rendering (images, attachments, emoji, **bold**, *italic*, ~~strikethrough~~, `code`, lists)
-- 🧩 Adaptive Cards — Workflow and bot cards render as structured terminal content with titles, facts, and usable links instead of blank timestamp rows
-- ❤️ Message Interactions — view and add reactions (Heart, Like, Laugh, etc.) to any message
-- 🔗 Clickable, Extractable & Openable URLs — links are clickable in supported terminals, can be extracted/copied via the `u` key, and opened in your browser/app via the `o` key
-- ✏️ Message Management — send, edit, and delete messages (includes multi-line support)
-- **✍️ Markdown Formatting** — compose messages with `**bold**`, `*italic*`, ~~`~~strike~~`~~, `` `code` ``, fenced code blocks, and bullet/ordered lists; formatting is sent as rich HTML to all Teams clients and rendered with ANSI styles in the TUI
-- 📋 **Clipboard Image Pasting** — paste images from your system clipboard directly into the compose text field using **Ctrl+V** (automatically base64 encoded and sent as inline HTML attachments)
-- 🗣️ **@Mentions & Autocomplete** — mention users in your messages. Typing `@` displays a dropdown list of chat/channel members. Navigate with Up/Down/Tab/Shift+Tab and press Enter to autocomplete the name. Mentions are sent as native Microsoft Teams mentions.
-- 🔔 Notification modes: None / Console (BEL + visual bell) / System (desktop) / Both
-- 🔔 cmux-native notifications — when running inside cmux, System/Both notifications use `cmux notify` for sidebar unread state and workspace navigation
-- 🔄 Smart Background Polling & Sleep Mode — active chat messages poll every 3 s and chat list updates every 15 s. Polling auto-pauses when the terminal window is unfocused (blurred) or when you manually enter sleep mode via the `Esc` key.
-- 😊 Emoticon Auto-replacement — popular text emoticons (like `:)`, `:D`, `<3`) are automatically converted to Unicode emojis
-- 🔍 Search History — search messages in any chat, recursively loading and indexing all conversation history in the background
-- 🔍 Chat Search & Open — filter locally loaded chats or open/start a 1:1 chat directly by entering a UPN/email (bypassing directory search)
-- 💾 Saved Messages — press `s` to jump directly to your Teams chat with yourself
-- 📞 Call handoff — press `C` for audio or `V` for video to open an official Teams call with the selected chat participants
-- ⭐ Favourites — pin any chat to the top of the sidebar with `f`; favourites are sorted alphabetically and stay anchored regardless of activity
-- ❓ Help Popup — press `?` at any time to show a keyboard shortcuts reference with optional feature status
+### Important Limits
 
-- 🔵 Unread Indicators — chats with new messages are marked with a dot (●) and bold text
-- 😊 Reaction Indicators — chats with new reactions from other users are marked with their corresponding emoji (e.g. ❤️, 👍, 😆) and bold text
-- ⬆️ New messages bubble chats to the top of the list
-- 📌 Stable chat ordering — order only changes when new messages arrive
-- 💾 Token persistence — only authenticate once; tokens refresh automatically
+- This is an independent Graph client, not an official Microsoft Teams client.
+- Audio and video are handed off to the Teams app or browser. Media does not run inside the terminal.
+- Adaptive Cards are rendered as readable terminal content. Open-URL actions work; interactive form inputs and `Action.Submit` execution are not implemented.
+- Inline terminal images require Kitty Graphics Protocol support. cmux supports this; unsupported terminals show the attachment name and retain download/open actions.
+- Notifications are produced by the running `teams` process. Quit the process and polling stops.
+- Graph cannot create a one-to-one chat with the same user twice. The `s` shortcut finds an existing self-chat; create one once in Teams if none exists.
 
-**Optional features** (enable per-feature in `config.json`; see [AZURE_SETUP.md](AZURE_SETUP.md)):
-- 📎 **File Preview & Download** (`file_preview_enabled`) — Tab through attachments in the message popup and press Enter to download them to `~/Downloads/`
-  - **Terminal Image Preview** (`file_preview_in_terminal`) — Displays the highlighted image attachment directly inside the details popup on the right side using the Kitty Graphics Protocol (requires `file_preview_enabled: true`)
-  - Image attachments render automatically as cached thumbnails in the message timeline. Press **`v`** for the newest image, or use **`m`**, select a message, then **`v`** for a larger preview
-- ⬆️ **File Browsing & Uploading** (`file_upload_enabled`) — Press `Ctrl+f` in compose mode to open a file browser and attach small files (up to 50MB) from your computer. Files are uploaded to OneDrive/SharePoint and attached to your message.
-- 🟢 **User Presence** (`presence_enabled`) — press `p` in message selection mode to see real-time availability of the message sender
-- 👤 **User Profile** (`user_profile_enabled`) — press `i` in message selection mode to view extended profile info (name, email, job title, department)
-- 🏢 **Teams Channels** (`teams_channels_enabled`) — Teams channels appear in the main sidebar below your chats; navigate with `j`/`k` and read messages just like chats. Supports background polling, global activity sorting (most active unhidden channels on top), unread indicators, and user-toggleable hidden channels (press `h` to toggle).
+## Requirements
 
----
+- Go 1.25 or newer
+- A Microsoft 365 account with Teams access
+- A Microsoft Entra app registration configured for device-code authentication
+- A Unicode terminal; cmux or another Kitty-compatible terminal is recommended for inline images
 
-## Installation
+## Install
 
-### Prerequisites
-
-- Go 1.22 or later
-- A Microsoft account with access to Microsoft Teams
-
-### Build
+Clone this fork and build the command as `teams`:
 
 ```bash
-git clone https://github.com/nospor/teams-tui-go
+git clone https://github.com/alimirayman/teams-tui-go.git
 cd teams-tui-go
-go build -o teams-tui-go .
-
-# or (builds slower, but binary is smaller)
-go build -trimpath -ldflags="-s -w" -o teams-tui-go .
-
-# then run
-./teams-tui-go
-
-# you may also want to copy the binary to your PATH (and run it from any place), e.g.:
-sudo cp teams-tui-go /usr/local/bin/
+mkdir -p "$(go env GOPATH)/bin"
+go build -trimpath -ldflags="-s -w" -o "$(go env GOPATH)/bin/teams" .
 ```
 
-### Install to PATH
+Ensure the Go binary directory is on `PATH`:
 
 ```bash
-go install github.com/nospor/teams-tui-go@latest
+export PATH="$(go env GOPATH)/bin:$PATH"
+teams
 ```
 
----
+Add that `export` line to `~/.zshrc`, `~/.bashrc`, or the relevant shell profile if needed.
+
+### Upgrade
+
+```bash
+cd /path/to/teams-tui-go
+git pull --ff-only origin main
+go test ./...
+go build -trimpath -ldflags="-s -w" -o "$(go env GOPATH)/bin/teams" .
+```
+
+## Microsoft Entra Setup
+
+Use your own Entra app registration. The built-in upstream Microsoft client ID can fail with `AADSTS65002` because first-party Microsoft applications require preauthorization that a tenant administrator cannot configure independently.
+
+1. Create an app registration in the Microsoft Entra admin center.
+2. Select accounts in your organizational directory unless you specifically need multitenant access.
+3. Under **Authentication**, enable **Allow public client flows**.
+4. Add the delegated Microsoft Graph permissions required by the features you use.
+5. Copy the **Application (client) ID** and **Directory (tenant) ID** into `config.json`.
+6. Grant tenant admin consent for permissions that require it.
+
+See [AZURE_SETUP.md](AZURE_SETUP.md) for the portal walkthrough.
+
+### Graph Permissions
+
+Core authentication always requests:
+
+| Permission | Purpose |
+| --- | --- |
+| `User.Read` | Load the signed-in profile |
+| `Chat.ReadWrite` | Read chats, send messages, and update read state |
+| `offline_access` | Refresh authentication without signing in every run |
+
+Optional permissions are requested only when their matching config feature is enabled:
+
+| Config key | Delegated permission | Purpose |
+| --- | --- | --- |
+| `file_preview_enabled` | `Files.Read` | Resolve and download OneDrive/SharePoint attachments |
+| `file_upload_enabled` | `Files.ReadWrite` | Upload chat and channel files |
+| `presence_enabled` | `Presence.Read.All` | Read user availability and activity |
+| `user_profile_enabled` | `User.ReadBasic.All` | Show basic sender profiles |
+| `user_profile_extended` | `User.Read.All` | Show job title, department, office, and related profile data |
+| `teams_channels_enabled` | `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`, `ChannelMessage.ReadWrite` | Enable channel browsing and message operations |
+| `channel_mentions_enabled` | `TeamMember.Read.All` | Load channel members for mention autocomplete |
+
+`ChannelMessage.Read.All` and `User.Read.All` commonly require admin consent in organizational tenants.
+
+When permissions or feature flags change, remove the cached `token.json` from the platform cache directory and restart `teams` to perform a fresh device-code login.
 
 ## Configuration
 
-### Client ID and Tenant ID (optional)
+The app creates `config.json` with all defaults on first run.
 
-By default the app uses Microsoft's public Teams client ID. To use your own Azure AD app registration:
+| Platform | Config directory | Cache directory |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/teams-tui-go/` | `~/Library/Caches/teams-tui-go/` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/teams-tui-go/` | `${XDG_CACHE_HOME:-~/.cache}/teams-tui-go/` |
 
-1. Follow the instructions in [AZURE_SETUP.md](AZURE_SETUP.md).
-2. Set your client ID and tenant ID using one of:
+Environment variables `CLIENT_ID` and `TENANT_ID` override `config.json`. A project-local `.env` file is also loaded.
 
-   **Option A — environment variable:**
-   ```bash
-   cp .env.example .env
-   # Edit .env and set:
-   # CLIENT_ID=<your-client-id>
-   # TENANT_ID=<your-directory-tenant-id>
-   ```
-
-   **Option B — config file** (`~/Library/Application Support/teams-tui-go/config.json` on macOS, `~/.config/teams-tui-go/config.json` on Linux):
-   ```json
-   {
-     "client_id": "your-client-id-here",
-     "tenant_id": "your-directory-tenant-id-here"
-   }
-   ```
-
-### Notifications
-- **Toggle Mode**: Cycle through notification modes at runtime by pressing `n`. The chosen mode is automatically saved.
-- **cmux**: When `CMUX_SOCKET_PATH` is available, System/Both mode automatically uses `cmux notify`; otherwise it uses the operating system notification service.
-- **Message Previews**: Configure desktop notifications in the platform config path shown above:
-
-  ```json
-  {
-    "notification_mode": "System",
-    "notification_show_preview": true,
-    "notification_preview_len": 80
-  }
-  ```
-  - `notification_show_preview`: Set to `true` to include the message content in the desktop notification.
-  - `notification_preview_len`: The maximum number of characters to show in the preview.
-
-### Message Limit
-Configure how many messages to fetch when opening a chat in `~/.config/teams-tui-go/config.json`:
-
-  ```json
-  {
-    "message_limit": 50
-  }
-  ```
-  - `message_limit`: The number of messages to fetch (default: 50). For limits greater than 50, the app automatically makes sequential paginated requests. Capped at `200` to prevent excessive API requests.
-
-### Chat Limit
-Configure how many chats to load in the sidebar in `~/.config/teams-tui-go/config.json`:
-
-  ```json
-  {
-    "chat_limit": 50
-  }
-  ```
-  - `chat_limit`: The maximum number of chats to fetch and display (default: 50). Automatically makes paginated requests if needed. Capped at `100` to prevent API rate-limiting during member loading.
-
-### Search Context Limit
-Configure how many context messages (before and after each search match) to display in the search history popup in `~/.config/teams-tui-go/config.json`:
-
-  ```json
-  {
-    "search_context_limit": 3
-  }
-  ```
-  - `search_context_limit`: The number of context messages before and after each match to include (default: 3).
-
-### Channel Message Refresh
-Configure background refresh rate for unhidden channels (in minutes) in `~/.config/teams-tui-go/config.json`:
-
-  ```json
-  {
-    "channel_msg_refresh_min": 2
-  }
-  ```
-  - `channel_msg_refresh_min`: The background polling interval in minutes for unhidden channels (default: 2).
-
-### External Editor
-Configure the external editor to open when pressing `Ctrl+g` in compose mode in `~/.config/teams-tui-go/config.json`:
-
-  ```json
-  {
-    "external_editor": "vim"
-  }
-  ```
-  - `external_editor`: The editor command or path to run (e.g. `"vim"`, `"neovim"`, `"nano"`). If empty/unspecified, it falls back to `$EDITOR`, then `$VISUAL`, and defaults to `"vim"`.
-
-### URL Opening Commands
-Configure the commands used to open URLs when pressing `o` on a message or from the URL selection menu in `~/.config/teams-tui-go/config.json`:
-
-  ```json
-  {
-    "browser_command": "xdg-open",
-    "youtrack_command": "yt-tui",
-    "gitlab_command": "gitlab-tui"
-  }
-  ```
-  - `browser_command`: The command used to open general URLs (default: `"xdg-open"`, but you can specify e.g. `"firefox"` or `"google-chrome"`). This key is always initialized in `config.json`.
-  - `youtrack_command`: The optional command to open YouTrack URLs (default: `"yt-tui"`, but you can specify e.g. `"youtrack-cli"` or `"yt-cli"`). If a URL contains `"youtrack"`, this command is executed. Useful with tools like [yt-tui](https://github.com/nospor/yt-tui).
-  - `gitlab_command`: The optional command to open GitLab URLs (default: `"gitlab-tui"`). If a URL contains `"gitlab"` (for example, merge requests, pipelines, or jobs), this command is executed. Useful with tools like [gitlab-tui](https://github.com/nospor/gitlab-tui).
-
-### Chat Icon Themes
-You can configure the style of chat type indicators in the sidebar using `~/.config/teams-tui-go/config.json`:
+### Complete Example
 
 ```json
 {
-  "chat_icon_theme": "unicode"
+  "client_id": "YOUR-APPLICATION-CLIENT-ID",
+  "tenant_id": "YOUR-DIRECTORY-TENANT-ID",
+  "notification_mode": "System",
+  "notification_show_preview": true,
+  "notification_preview_len": 120,
+  "message_limit": 50,
+  "search_context_limit": 3,
+  "chat_limit": 50,
+  "chat_icon_theme": "unicode",
+  "file_preview_enabled": true,
+  "file_preview_in_terminal": true,
+  "file_upload_enabled": true,
+  "presence_enabled": true,
+  "user_profile_enabled": true,
+  "user_profile_extended": false,
+  "teams_channels_enabled": true,
+  "channel_mentions_enabled": false,
+  "channel_msg_refresh_min": 2,
+  "sqlite_enabled": false,
+  "external_editor": "",
+  "browser_command": "open"
 }
 ```
-- `chat_icon_theme`: Choose between presets (default: `"unicode"`):
-  - `"unicode"`: Minimal single-width geometric icons (`◉` 1:1, `⊞` group, `⊛` meeting, `☰` channel).
-  - `"emoji"`: Colorful emojis (`👤` 1:1, `👥` group, `📅` meeting, `#️⃣` channel).
-  - `"text"`: The original bracketed text headers (`[oneOnOne]`, `[group]`, `[meeting]`, `[channel]`).
 
-You can also completely override icons individually by defining a `"custom_chat_icons"` map:
+Use `"browser_command": "open"` on macOS and `"browser_command": "xdg-open"` on Linux. Optional `youtrack_command` and `gitlab_command` values can route those URLs to dedicated terminal clients; otherwise they use `browser_command`.
+
+### General Settings
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `notification_mode` | `None` | `None`, `Console`, `System`, or `Both`; press `n` to cycle and persist it |
+| `notification_show_preview` | `false` | Include message text in notifications |
+| `notification_preview_len` | `50` | Maximum preview length |
+| `message_limit` | `50` | Initial messages per conversation; capped at 200 |
+| `chat_limit` | `50` | Sidebar chats; capped at 100 |
+| `search_context_limit` | `3` | Messages shown before and after a search hit |
+| `channel_msg_refresh_min` | `2` | Background refresh interval for unhidden channels |
+| `sqlite_enabled` | `false` | Persist message history and pagination state locally |
+| `external_editor` | empty | Falls back to `$EDITOR`, then `$VISUAL`, then `vim` |
+| `chat_icon_theme` | `unicode` | `unicode`, `emoji`, or `text` |
+
+Custom sidebar icons can be supplied with `custom_chat_icons`:
 
 ```json
 {
   "custom_chat_icons": {
-    "oneOnOne": "💬",
-    "group": "👥",
-    "meeting": "⏱️",
-    "channel": "📢",
-    "default": "◈"
+    "oneOnOne": "DM",
+    "group": "GR",
+    "meeting": "MT",
+    "channel": "#",
+    "default": "*"
   }
 }
 ```
 
-### Optional Features
+## cmux
 
-Each feature is disabled by default and requires an additional Graph API permission. Enable them in `~/.config/teams-tui-go/config.json` and **delete `~/.cache/teams-tui-go/token.json`** to force re-authentication with the new scopes:
+When launched inside cmux, `System` and `Both` notification modes use `cmux notify` automatically. The integration detects `CMUX_BUNDLED_CLI_PATH`, or `CMUX_SOCKET_PATH` plus a `cmux` executable on `PATH`. This gives cmux sidebar unread state, workspace navigation, and focused-surface suppression.
+
+Enable it in `config.json`:
 
 ```json
 {
-  "sqlite_enabled": false,
-  "file_preview_enabled": true,
-  "file_preview_in_terminal": false,
-  "file_upload_enabled": false,
-  "presence_enabled": true,
-  "user_profile_enabled": true,
-  "user_profile_extended": false,
-  "teams_channels_enabled": false,
-  "channel_mentions_enabled": false
+  "notification_mode": "System",
+  "notification_show_preview": true,
+  "notification_preview_len": 120
 }
 ```
 
-| Config key | Default | Required permission | Effect |
-|---|---|---|---|
-| `sqlite_enabled` | `false` | - | Enables offline caching via SQLite (`~/.cache/teams-tui-go/teams-tui-go.db`). Instantly loads messages when entering chats/channels, syncing updates in the background. |
-| `file_preview_enabled` | `false` | `Files.Read` | Tab through attachments in the `v` popup and press Enter to download to `~/Downloads/` |
-| `file_preview_in_terminal` | `false` | `Files.Read` | Previews the highlighted image attachment inside the details popup on the right side using the Kitty Graphics Protocol (requires `file_preview_enabled: true`) |
-| `file_upload_enabled` | `false` | `Files.ReadWrite` | Press `Ctrl+f` in compose mode to open a file browser and attach files under 4MB from the computer |
-| `presence_enabled` | `false` | `Presence.Read.All` | Press `p` in message selection mode to see sender availability |
-| `user_profile_enabled` | `false` | `User.ReadBasic.All` | Press `i` in message selection mode to view sender's profile |
-| `user_profile_extended` | `false` | `User.Read.All` *(admin consent)* | Adds job title, department, office to the profile popup (requires `user_profile_enabled: true`) |
-| `teams_channels_enabled` | `false` | `Team.ReadBasic.All` + `Channel.ReadBasic.All` + `ChannelMessage.Read.All` *(admin consent)* + `ChannelMessage.Send` + `ChannelMessage.ReadWrite` | Teams channels appear in the sidebar below chats; navigate with `j`/`k`. Supports background polling, activity sorting, unread dots, and hidden channels (`h` key). |
-| `channel_mentions_enabled` | `false` | `TeamMember.Read.All` | Enables autocomplete suggestion dropdown list of team members in Teams channels when typing `@` mentions. |
-
-See [AZURE_SETUP.md](AZURE_SETUP.md) for full permission setup instructions.
-
----
-
-## Usage
+You can verify cmux independently:
 
 ```bash
-# Run directly
-./teams-tui-go
-
-# Or if installed
-teams-tui-go
+cmux notify --title "Microsoft Teams" --subtitle "teams" --body "Notification test"
 ```
 
-On first run (or after token expiry) you will be prompted to visit a URL and enter a short code. Subsequent runs use the cached token (auto-refreshed).
+Chat metadata refreshes every 15 seconds. The active focused conversation refreshes about every 3 seconds. Unhidden channels refresh using `channel_msg_refresh_min`.
 
----
+## Keyboard Reference
 
-## Markdown Formatting
+Press `?` in the app for the contextual help popup.
 
-Messages support a subset of markdown that is converted to rich HTML when sent, so recipients on **any Teams client** (Desktop, Web, Mobile) see proper formatting.
+### Conversation Mode
 
-### Inline syntax
+| Key | Action |
+| --- | --- |
+| `j` / `k`, arrows | Move through chats or channels |
+| `g` / `G` | Jump to first or last item |
+| `Enter` | Load the highlighted conversation immediately |
+| `Tab` | Switch between chats and channels |
+| `K` / `J`, `PgUp` / `PgDn` | Scroll the timeline |
+| `Ctrl+u` / `Ctrl+d` | Scroll half a page |
+| `m` | Enter message-selection mode |
+| `z` | Expand or collapse the message near the viewport |
+| `i` | Compose a message |
+| `/` | Search message history |
+| `c` | Find a local chat or open a user by email/UPN |
+| `s` | Open Saved Messages, the chat with yourself |
+| `C` / `V` | Open a Teams audio or video call for the selected chat |
+| `v` | Preview the newest image in loaded messages |
+| `f` | Toggle favourite for a chat |
+| `p` | Show participant presence for a chat |
+| `h` / `?` | Help; `h` hides/unhides a selected channel |
+| `n` | Cycle notification mode |
+| `Esc` | Clear highlighting or enter sleep mode |
+| `q` / `Ctrl+c` | Quit |
 
-| Syntax                   | Result     |
-| ------------------------ | ---------- |
-| `**bold**` or `__bold__` | **Bold**   |
-| `*italic*` or `_italic_` | *Italic*   |
-| `~~strikethrough~~`      | ~~Strike~~ |
-| `` `inline code` ``      | `code`     |
+### Message-Selection Mode
 
-### Block syntax
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Select newer or older messages |
+| `g` / `G` | Jump to oldest or newest loaded message |
+| `z` / `Enter` | Expand or collapse the selected message |
+| `v` | Open full message and attachment view |
+| `a` | Reply to the selected message or channel thread |
+| `r`, then `1`-`6` | Add a reaction |
+| `y` | Copy rendered message text |
+| `u` | Copy a URL; includes Adaptive Card links |
+| `o` | Open a URL; includes Adaptive Card links |
+| `e` / `d` | Edit or delete your own message |
+| `p` | Show sender presence |
+| `i` | Show sender profile |
+| `Ctrl+g` | Open the message read-only in the external editor |
+| `m` / `Esc` | Return to conversation mode |
 
-| Syntax                        | Result                  |
-| ----------------------------- | ----------------------- |
-| `* item` or `- item`          | Unordered (bullet) list |
-| `1. item` or `1) item`        | Ordered (numbered) list |
-| ` ``` ` fence on its own line | Multi-line code block   |
+### Compose Mode
 
-**Example:**
+| Key | Action |
+| --- | --- |
+| `Enter` | Send |
+| `Alt+Enter` | Insert a newline |
+| `@` | Open mention autocomplete |
+| `Ctrl+v` | Read and attach PNG/JPEG clipboard data |
+| `Cmd+v` | Attach a cmux/native-terminal pasted image path when supplied by the terminal |
+| `Ctrl+f` | Browse and attach a local file |
+| `Ctrl+g` | Compose in the external editor |
+| `Esc` | Cancel compose |
 
-````
-**Meeting notes** for *Project X*
+## Message Rendering
 
-* Review PR #42
-* Deploy to staging
+### Long Messages
 
-```
-fmt.Println("hello")
-```
-````
+Messages longer than eight rendered lines collapse automatically to keep navigation fast. Press `z` to expand or collapse them. Adaptive Cards start expanded so their fields are visible immediately.
 
-> **Note:** Language hints (e.g. ` ```go `) are accepted syntax but have no visible effect — Teams strips the `class` attribute from the stored HTML, so the hint is not preserved or displayed.
+### Adaptive Cards
 
-### Receive side rendering
+Workflow and bot messages using `application/vnd.microsoft.card.adaptive` render directly in the timeline instead of appearing as blank timestamp rows. Supported presentation elements include:
 
-Incoming messages from all clients are rendered with matching ANSI styles in the TUI:
+- `TextBlock` and `RichTextBlock`
+- `FactSet` with aligned labels and values
+- Containers, columns, separators, and images represented by labels
+- Markdown links and `Action.OpenUrl`
 
-- Bold, italic, and strikethrough use terminal text attributes
-- Inline `code` is highlighted in amber
-- Code blocks are highlighted in green
-- Bullet and numbered lists show `•` / `1.` prefixes
+Select the card with `m`, then press `o` to open its action or `u` to copy the URL.
 
-### Edit round-trip
+### Markdown
 
-When you press `e` to edit an existing message the edit box is pre-filled with the **original markdown source** (e.g. `**bold**` rather than stripped plain text), so formatting is preserved after saving.
+Outgoing Markdown is converted to Teams-compatible HTML. Incoming HTML is rendered with terminal styles.
 
-### Clipboard Image Pasting
+| Input | Result |
+| --- | --- |
+| `**bold**` | Bold |
+| `*italic*` | Italic |
+| `~~strike~~` | Strikethrough |
+| `` `code` `` | Inline code |
+| `- item` or `* item` | Bullet list |
+| `1. item` | Numbered list |
+| Triple-backtick fence | Multiline code block |
 
-When in compose mode (`i`), you can paste images (PNG/JPEG) directly from your system clipboard using **`Ctrl+V`**. Native terminal paste (`Cmd+V` on macOS) is also recognized when cmux or the terminal provides a temporary local image path.
-- A placeholder like `[Image 1]` will be inserted into the text field.
-- You can move, copy, or delete this placeholder to control where the image appears in the sent message. If deleted, the image won't be sent.
-- When the message is sent, the image is automatically base64-encoded and uploaded inline.
+Editing your own message restores Markdown-like source rather than flattened terminal text.
 
-> [!NOTE]
-> On Linux, `Ctrl+Shift+V` is intercepted by most terminal emulators to perform text-only paste. To paste clipboard images, make sure to use **`Ctrl+V`** instead, which is passed directly to the TUI.
+## Images and Attachments
 
-### File Browsing & Uploading
+### Clipboard Images
 
-When `file_upload_enabled` is set to `true` in `config.json`, you can attach small files (under 4MB) from your local computer to chat or channel messages.
-- In compose mode (`i`), press **`Ctrl+f`** to open the offline file browser overlay.
-- Navigate directories using `j`/`k` (or arrow keys) and enter directories with `Enter`. Move to parent directories via `..`.
-- Highlight a file and press **`Enter`** to select and attach it.
-- A placeholder like `[File: filename.ext]` is inserted into the textarea. You can move, copy, or delete it to control inline message rendering.
-- When sending the message, files are automatically uploaded to OneDrive (for chats) or SharePoint (for channels) and attached as reference attachments to the message.
+Enter compose mode with `i`, then paste a PNG or JPEG. The app inserts an `[Image N]` placeholder and attaches the image when the message is sent. Removing the placeholder removes that pending image.
 
-### External Editor (Composing & Viewing)
+On cmux/macOS, normal `Cmd+v` works when cmux sends a temporary image filepath. `Ctrl+v` also reads image data directly from the system clipboard. Linux clipboard support uses `wl-paste` or `xclip` when available.
 
-You can use an external editor (such as `vim`, `neovim`, or `nano`) to either compose a new message or view an existing message:
+### Timeline Images
 
-- **Composing/Editing**: When in compose mode (`i`), press **`Ctrl+g`** to open the external editor. The current input text is saved to a temporary file and loaded into the editor. When you save and exit, the TUI loads the changes back into the compose field.
-- **Viewing**: When in message mode (`m`) or message details popup (`v`), press **`Ctrl+g`** to open the selected message's full content in the external editor in read-only mode. Edits made in the editor are discarded when you exit, returning you directly to your previous position in the TUI.
+With both `file_preview_enabled` and `file_preview_in_terminal` enabled, image attachments download into the cache and render automatically in the timeline on Kitty-compatible terminals. Press `v` for a larger view.
 
-The external editor command can be configured in your `config.json` via the `"external_editor"` option. If not specified, it falls back to the `$EDITOR` environment variable, then `$VISUAL` environment variable, and defaults to `"vim"`.
+If only a filename appears, verify the feature flags, `Files.Read` permission, fresh authentication, and terminal Kitty Graphics support.
 
----
+### Files
 
-## Keyboard Controls
+Press `Ctrl+f` while composing to attach a file up to 50 MB. Chat files upload to the OneDrive `Microsoft Teams Chat Files` folder; channel files upload to the channel SharePoint folder. Files above 4 MB use a resumable upload session automatically.
 
-| Key          | Action                                                    |
-| ------------ | --------------------------------------------------------- |
-| `↑` / `k`    | Move up in list (within active section)                   |
-| `↓` / `j`    | Move down in list (within active section)                 |
-| `g` / `G`    | Jump to first / last conversation                         |
-| `Enter`      | Open highlighted conversation immediately                 |
-| `Tab`        | Switch between Chats & Channels sections (in Normal Mode) |
-| `PgUp` / `K` | Scroll messages up                                        |
-| `PgDn` / `J` | Scroll messages down                                      |
-| `Ctrl+u` / `Ctrl+d` | Scroll messages by half a page                    |
-| `/`          | Open search input (in Normal Mode)                        |
-| `Esc`        | Clear active search, or enter sleep/idle mode (Normal Mode) |
-| `c`          | Open chat search / chat creation popup                    |
-| `s`          | Open Saved Messages (chat with yourself)                  |
-| `C` / `V`    | Start Teams audio / video call for selected chat          |
-| `f`          | Toggle ★ favourite on selected chat (chats only)          |
-| `h`          | Show help; toggle hide/unhide when a channel is selected   |
-| `i`          | Enter compose mode                                        |
-| `Ctrl+V`     | Paste image from clipboard (in Compose Mode)              |
-| `Ctrl+f`     | Browse and attach file from computer (in Compose Mode)    |
-| `Ctrl+g`     | Compose/edit message in external editor (in Compose Mode) |
-| `Enter`      | Send message                                              |
-| `Alt+Enter`  | New line in message                                       |
-| `Esc`        | Cancel compose                                            |
-| `n`          | Toggle notification mode                                  |
-| `?`          | Show help popup (keyboard reference + feature status)      |
-| `m`          | Enter/Exit **Message Mode** (to select/react/delete/copy) |
-| `z`          | Expand/collapse the message near the viewport              |
-| `z` / `Enter`| Expand/collapse selected message (Message Mode)            |
-| `v`          | View details/reactions of selected message (Message Mode) |
-| `Ctrl+g`     | View selected message in external editor (in Message Mode / Message View Popup) |
-| `Tab`        | Switch to attachment cursor in `v` popup (in Message View Popup) |
-| `Enter`      | Download selected attachment (in `v` attachment cursor)   |
-| `r`          | React to selected message (in Message Mode)               |
-| `y`          | Copy (yank) message text (in Message Mode)                |
-| `u`          | Copy (yank) URL from message (in Message Mode / History Search) |
-| `o`          | Open URL from message (in Message Mode / History Search / URL list) |
-| `d`          | Delete selected message (in Message Mode)                 |
-| `e`          | Edit selected message (in Message Mode)                   |
-| `a`          | Answer (reply) to selected message (in Message Mode)      |
-| `p`          | Show presence status of sender (`presence_enabled`)       |
-| `i`          | Show profile info of sender (`user_profile_enabled`)      |
-| `1-6`        | Send reaction (in Reaction Mode)                          |
-| `q`          | Quit                                                      |
+To download, select a message with `m`, open it with `v`, press `Tab` to focus attachments, and press `Enter`. Downloads are saved to the platform Downloads directory.
 
----
+## Saved Messages
 
-## File Locations
+Press `s` to locate and open the existing one-to-one conversation whose only user sender is the signed-in account. It is labeled `Saved messages` instead of `Unknown`.
 
-| File                                          | Purpose                             |
-| --------------------------------------------- | ----------------------------------- |
-| App config dir `teams-tui-go/config.json`       | Client ID, tenant ID, notification mode, limits |
-| `~/.config/teams-tui-go/favourites.json`       | Pinned/favourite chat IDs           |
-| `~/.cache/teams-tui-go/token.json`             | OAuth2 access + refresh tokens      |
-| `~/.cache/teams-tui-go/profile.json`           | Cached user profile                 |
-| `~/.cache/teams-tui-go/teams-tui-go.db`       | SQLite database caching messages    |
+If the app reports that Saved Messages was not found, open Microsoft Teams once, start a chat with yourself, send a message, and restart `teams`. Microsoft Graph rejects attempts to programmatically create a one-to-one chat with duplicate members.
 
----
+## Calls
+
+Press uppercase `C` for audio or uppercase `V` for video while a chat is selected. The app builds an official `teams.microsoft.com/l/call` link from the selected chat members and opens it using `browser_command`. Teams asks for confirmation before starting the call.
+
+Calls are not available for channels or conversations without callable member email addresses.
+
+## Troubleshooting
+
+### `AADSTS65002`
+
+Do not use the upstream Microsoft first-party client ID. Create your own Entra app registration, enable public client flow, set your client and tenant IDs, remove the cached token, and authenticate again.
+
+### Permissions Changed but the Feature Still Fails
+
+Remove `token.json` from the cache directory shown above and restart. Existing access and refresh tokens do not gain newly configured scopes automatically.
+
+### Adaptive Cards Show Only Dates
+
+Update this fork and rebuild `teams`. Older builds removed all card attachments before rendering them.
+
+### No cmux Notification
+
+Set `notification_mode` to `System` or `Both`, leave `teams` running, and verify `cmux notify` works in the same surface. `Console` mode only emits a terminal bell and visual flash.
+
+### Images Show Only Filenames
+
+Enable both preview flags, grant `Files.Read`, re-authenticate, and use a Kitty-compatible terminal. The attachment remains downloadable even when the terminal cannot draw it inline.
+
+### Calls Do Not Open on macOS
+
+Set `"browser_command": "open"`. Linux normally uses `xdg-open`.
+
+### Bangla or Unicode Layout Looks Wrong
+
+Use an up-to-date terminal and a font with Bengali glyph coverage. The TUI uses grapheme-aware cell widths, but font fallback still determines glyph shaping.
+
+## Local Files
+
+| File | Purpose |
+| --- | --- |
+| `config.json` in the config directory | Account, features, limits, notifications, and commands |
+| `favourites.json` in the config directory | Pinned chat IDs |
+| `unhidden_channels.json` in the config directory | Channel visibility state |
+| `filepicker_settings.json` in the config directory | Last file browser directory and sorting |
+| `token.json` in the cache directory | OAuth access and refresh tokens; mode `0600` |
+| `profile.json` in the cache directory | Cached signed-in profile |
+| `teams-tui-go.db` in the cache directory | Optional SQLite message history |
+| `previews/` in the cache directory | Downloaded terminal image previews |
 
 ## Development
 
 ```bash
-# Run in development
-go run .
-
-# Build binary
-go build -o teams-tui-go .
-
-# Lint
+go test ./...
+go test -race ./...
 go vet ./...
+go build -o bin/teams .
 ```
 
----
+The GitHub Actions test workflow also builds and tests the project. Keep changes formatted with `gofmt` and add focused tests for Graph payload parsing, terminal-width behavior, and key-driven state transitions.
 
 ## License
 
 See [LICENSE](LICENSE).
-
-## Thanks For Visiting
-Hope you liked it. Wanna **[buy Me a coffee](https://www.buymeacoffee.com/nospor)**?
