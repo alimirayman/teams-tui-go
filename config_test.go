@@ -7,17 +7,16 @@ import (
 	"testing"
 )
 
-func TestInitConfig(t *testing.T) {
-	// Set XDG_CONFIG_HOME to a temporary directory to avoid writing to the user's actual config.
-	tmpDir, err := os.MkdirTemp("", "teams-tui-config-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+func withTempConfigHome(t *testing.T) {
+	t.Helper()
 
-	oldXdg := os.Getenv("XDG_CONFIG_HOME")
-	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
-	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+}
+
+func TestInitConfig(t *testing.T) {
+	withTempConfigHome(t)
 
 	// Case 1: Config does not exist yet.
 	InitConfig()
@@ -42,6 +41,9 @@ func TestInitConfig(t *testing.T) {
 	// Verify defaults.
 	if cfg.ClientID == nil || *cfg.ClientID != defaultClientID {
 		t.Errorf("expected client ID %q, got %v", defaultClientID, cfg.ClientID)
+	}
+	if cfg.TenantID == nil || *cfg.TenantID != defaultTenantID {
+		t.Errorf("expected tenant ID %q, got %v", defaultTenantID, cfg.TenantID)
 	}
 	if cfg.NotificationMode == nil || *cfg.NotificationMode != NotificationNone {
 		t.Errorf("expected notification mode %v, got %v", NotificationNone, cfg.NotificationMode)
@@ -77,13 +79,14 @@ func TestInitConfig(t *testing.T) {
 		t.Errorf("expected gitlab command to be nil, got %v", cfg.GitlabCommand)
 	}
 
-
 	// Case 2: Config exists but is missing some options (e.g. partial).
 	// We'll write a custom config with only ClientID and MessageLimit set, and others missing/nil.
 	customClientID := "custom-id-123"
+	customTenantID := "tenant-id-123"
 	customMsgLimit := 100
 	partialCfg := Config{
 		ClientID:     &customClientID,
+		TenantID:     &customTenantID,
 		MessageLimit: &customMsgLimit,
 	}
 	partialData, err := json.Marshal(partialCfg)
@@ -111,6 +114,9 @@ func TestInitConfig(t *testing.T) {
 	// Custom values must be preserved.
 	if updatedCfg.ClientID == nil || *updatedCfg.ClientID != customClientID {
 		t.Errorf("expected preserved client ID %q, got %v", customClientID, updatedCfg.ClientID)
+	}
+	if updatedCfg.TenantID == nil || *updatedCfg.TenantID != customTenantID {
+		t.Errorf("expected preserved tenant ID %q, got %v", customTenantID, updatedCfg.TenantID)
 	}
 	if updatedCfg.MessageLimit == nil || *updatedCfg.MessageLimit != customMsgLimit {
 		t.Errorf("expected preserved message limit %d, got %v", customMsgLimit, updatedCfg.MessageLimit)
@@ -143,17 +149,39 @@ func TestInitConfig(t *testing.T) {
 	}
 }
 
-func TestResolveMessageLimit(t *testing.T) {
-	// Set XDG_CONFIG_HOME to a temporary directory.
-	tmpDir, err := os.MkdirTemp("", "teams-tui-config-test-limit")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+func TestResolveTenantID(t *testing.T) {
+	withTempConfigHome(t)
+	t.Setenv("TENANT_ID", "")
 
-	oldXdg := os.Getenv("XDG_CONFIG_HOME")
-	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
-	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+	if got := ResolveTenantID(); got != defaultTenantID {
+		t.Fatalf("expected default tenant ID %q, got %q", defaultTenantID, got)
+	}
+
+	appDir, err := GetAppDir()
+	if err != nil {
+		t.Fatalf("GetAppDir failed: %v", err)
+	}
+	tenantID := "00000000-1111-2222-3333-444444444444"
+	cfg := Config{TenantID: &tenantID}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "config.json"), data, 0o600); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if got := ResolveTenantID(); got != tenantID {
+		t.Fatalf("expected tenant ID from config %q, got %q", tenantID, got)
+	}
+
+	os.Setenv("TENANT_ID", " env-tenant ")
+	if got := ResolveTenantID(); got != "env-tenant" {
+		t.Fatalf("expected trimmed tenant ID from env, got %q", got)
+	}
+}
+
+func TestResolveMessageLimit(t *testing.T) {
+	withTempConfigHome(t)
 
 	// Write custom config with message_limit = 52.
 	appDir, err := GetAppDir()
@@ -200,16 +228,7 @@ func TestResolveMessageLimit(t *testing.T) {
 }
 
 func TestResolveChatLimit(t *testing.T) {
-	// Set XDG_CONFIG_HOME to a temporary directory.
-	tmpDir, err := os.MkdirTemp("", "teams-tui-config-test-chat-limit")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	oldXdg := os.Getenv("XDG_CONFIG_HOME")
-	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
-	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+	withTempConfigHome(t)
 
 	// Write custom config with chat_limit = 72.
 	appDir, err := GetAppDir()
@@ -255,16 +274,7 @@ func TestResolveChatLimit(t *testing.T) {
 	}
 }
 func TestBuildScopes(t *testing.T) {
-	// Set XDG_CONFIG_HOME to a temporary directory.
-	tmpDir, err := os.MkdirTemp("", "teams-tui-scopes-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	oldXdg := os.Getenv("XDG_CONFIG_HOME")
-	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
-	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+	withTempConfigHome(t)
 
 	// Case 1: No features enabled — only basic scopes.
 	InitConfig()
@@ -357,16 +367,7 @@ func splitScopes(s string) []string {
 }
 
 func TestResolveFeatureFilePreviewInTerminal(t *testing.T) {
-	// Set XDG_CONFIG_HOME to a temporary directory.
-	tmpDir, err := os.MkdirTemp("", "teams-tui-preview-terminal-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	oldXdg := os.Getenv("XDG_CONFIG_HOME")
-	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
-	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+	withTempConfigHome(t)
 
 	// Write custom config with file_preview_in_terminal = true.
 	appDir, err := GetAppDir()
@@ -394,16 +395,7 @@ func TestResolveFeatureFilePreviewInTerminal(t *testing.T) {
 }
 
 func TestResolveExternalEditor(t *testing.T) {
-	// Set XDG_CONFIG_HOME to a temporary directory.
-	tmpDir, err := os.MkdirTemp("", "teams-tui-editor-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	oldXdg := os.Getenv("XDG_CONFIG_HOME")
-	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
-	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+	withTempConfigHome(t)
 
 	// Clean env vars to test fallbacks
 	oldEditor := os.Getenv("EDITOR")
@@ -463,15 +455,7 @@ func TestResolveExternalEditor(t *testing.T) {
 }
 
 func TestResolveURLCommands(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "teams-tui-url-cmd-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	oldXdg := os.Getenv("XDG_CONFIG_HOME")
-	defer os.Setenv("XDG_CONFIG_HOME", oldXdg)
-	os.Setenv("XDG_CONFIG_HOME", tmpDir)
+	withTempConfigHome(t)
 
 	// Case 1: Defaults.
 	if r := ResolveBrowserCommand(); r != "xdg-open" {
@@ -517,4 +501,3 @@ func TestResolveURLCommands(t *testing.T) {
 		t.Errorf("expected ResolveGitlabCommand to resolve to 'gitlab-cli', got %q", r)
 	}
 }
-

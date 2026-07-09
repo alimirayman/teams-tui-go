@@ -12,15 +12,6 @@ import (
 	"time"
 )
 
-const (
-	tenant = "common"
-)
-
-var (
-	deviceCodeURL = fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/devicecode", tenant)
-	tokenURL      = fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/token", tenant)
-)
-
 // DeviceCodeResponse is the response from the device code endpoint.
 type DeviceCodeResponse struct {
 	DeviceCode      string `json:"device_code"`
@@ -43,6 +34,14 @@ type TokenResponse struct {
 // tokenErrorResponse is returned when token polling is not yet complete or fails.
 type tokenErrorResponse struct {
 	Error string `json:"error"`
+}
+
+func oauthEndpoint(action string) string {
+	tenantID := strings.TrimSpace(ResolveTenantID())
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+	return fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/v2.0/%s", url.PathEscape(tenantID), action)
 }
 
 // tokenFilePath returns the path to the cached token file.
@@ -98,7 +97,7 @@ func StartDeviceFlow(clientID, scopes string) (*DeviceCodeResponse, error) {
 		"client_id": {clientID},
 		"scope":     {scopes},
 	}
-	resp, err := http.PostForm(deviceCodeURL, form)
+	resp, err := http.PostForm(oauthEndpoint("devicecode"), form)
 	if err != nil {
 		return nil, fmt.Errorf("device code request failed: %w", err)
 	}
@@ -129,7 +128,7 @@ func PollForToken(clientID, deviceCode string, interval int) (*TokenResponse, er
 			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 			"device_code": {deviceCode},
 		}
-		resp, err := http.PostForm(tokenURL, form)
+		resp, err := http.PostForm(oauthEndpoint("token"), form)
 		if err != nil {
 			return nil, fmt.Errorf("token poll request failed: %w", err)
 		}
@@ -174,7 +173,7 @@ func RefreshAccessToken(clientID, refreshToken, scopes string) (*TokenResponse, 
 		"refresh_token": {refreshToken},
 		"scope":         {scopes},
 	}
-	resp, err := http.PostForm(tokenURL, form)
+	resp, err := http.PostForm(oauthEndpoint("token"), form)
 	if err != nil {
 		return nil, fmt.Errorf("refresh request failed: %w", err)
 	}

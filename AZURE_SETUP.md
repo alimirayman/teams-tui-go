@@ -18,7 +18,7 @@ Navigate to [https://portal.azure.com](https://portal.azure.com) and sign in wit
 2. Click **"New registration"**.
 3. Fill in:
    - **Name**: `teams-tui-go` (or any name you like)
-   - **Supported account types**: Select **"Accounts in any organizational directory (Any Microsoft Entra ID tenant - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)"**
+   - **Supported account types**: Select **"Accounts in this organizational directory only"** unless you intentionally want to support other tenants.
    - **Redirect URI**: Leave blank (not needed for device code flow)
 4. Click **Register**.
 
@@ -37,26 +37,29 @@ Navigate to [https://portal.azure.com](https://portal.azure.com) and sign in wit
 4. Click **Add permissions**.
 5. (Optional) Click **"Grant admin consent"** if you have admin rights.
 
-### 5. Copy Your Client ID
+### 5. Copy Your Client ID and Tenant ID
 
 1. Go to **Overview** (left sidebar).
 2. Copy the **Application (client) ID** — this is your `CLIENT_ID`.
+3. Copy the **Directory (tenant) ID** — this is your `TENANT_ID`.
 
 ### 6. Configure teams-tui-go
 
-Set your client ID using either method:
+Set your client ID and tenant ID using either method:
 
 **Method A — `.env` file** (in the project directory):
 ```bash
 cp .env.example .env
 # Edit .env:
 CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+TENANT_ID=yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy
 ```
 
-**Method B — config file** (`~/.config/teams-tui-go/config.json`):
+**Method B — config file** (`~/Library/Application Support/teams-tui-go/config.json` on macOS, `~/.config/teams-tui-go/config.json` on Linux):
 ```json
 {
-  "client_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  "client_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "tenant_id": "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
 }
 ```
 
@@ -215,7 +218,7 @@ The new device code login will request all permissions for your currently enable
 ## Troubleshooting
 
 **"AADSTS50020: User account from identity provider does not exist in tenant"**
-→ Make sure you selected **"Multitenant and personal Microsoft accounts"** in step 2, not "Single tenant".
+→ Make sure `tenant_id` is set to the Directory (tenant) ID of the organization where your Teams account lives. If you intentionally omit `tenant_id`, create the app as multitenant.
 
 **"AADSTS7000218: The request body must contain the following parameter: 'client_assertion' or 'client_secret'"**
 → Make sure **"Allow public client flows"** is set to **Yes** in the Authentication settings (step 3).

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -145,16 +146,18 @@ func SaveFilepickerSettings(sortBy string, sortOrder string, currentDirectory st
 	return os.WriteFile(filepath.Join(dir, "filepicker_settings.json"), data, 0o600)
 }
 
-
-
 const appDirName = "teams-tui-go"
 
 // defaultClientID is the Microsoft Teams client ID fallback.
 const defaultClientID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
 
+// defaultTenantID keeps upstream behavior unless a tenant is configured.
+const defaultTenantID = "common"
+
 // Config holds persistent application settings.
 type Config struct {
 	ClientID                *string           `json:"client_id,omitempty"`
+	TenantID                *string           `json:"tenant_id,omitempty"`
 	NotificationMode        *NotificationMode `json:"notification_mode,omitempty"`
 	NotificationShowPreview *bool             `json:"notification_show_preview,omitempty"`
 	NotificationPreviewLen  *int              `json:"notification_preview_len,omitempty"`
@@ -167,16 +170,16 @@ type Config struct {
 	// Optional feature flags — each defaults to false (disabled).
 	// When enabled, the corresponding Graph API permission must be granted
 	// in the Azure app registration and the cached token refreshed.
-	FilePreviewEnabled    *bool `json:"file_preview_enabled,omitempty"`    // requires Files.Read
-	FilePreviewInTerminal *bool `json:"file_preview_in_terminal,omitempty"` // show image in terminal if file_preview_enabled is true
-	FileUploadEnabled     *bool `json:"file_upload_enabled,omitempty"`     // requires Files.ReadWrite
-	PresenceEnabled       *bool `json:"presence_enabled,omitempty"`        // requires Presence.Read.All
-	UserProfileEnabled    *bool `json:"user_profile_enabled,omitempty"`   // requires User.ReadBasic.All
-	UserProfileExtended   *bool `json:"user_profile_extended,omitempty"`  // requires User.Read.All (admin consent)
-	TeamsChannelsEnabled  *bool `json:"teams_channels_enabled,omitempty"` // requires Team.ReadBasic.All + Channel.ReadBasic.All + ChannelMessage.Read.All + ChannelMessage.Send + ChannelMessage.ReadWrite
-	ChannelMentionsEnabled *bool `json:"channel_mentions_enabled,omitempty"` // requires TeamMember.Read.All to load members for autocomplete in channels
-	ChannelMsgRefreshMin   *int  `json:"channel_msg_refresh_min,omitempty"`
-	SqliteEnabled          *bool `json:"sqlite_enabled,omitempty"`
+	FilePreviewEnabled     *bool   `json:"file_preview_enabled,omitempty"`     // requires Files.Read
+	FilePreviewInTerminal  *bool   `json:"file_preview_in_terminal,omitempty"` // show image in terminal if file_preview_enabled is true
+	FileUploadEnabled      *bool   `json:"file_upload_enabled,omitempty"`      // requires Files.ReadWrite
+	PresenceEnabled        *bool   `json:"presence_enabled,omitempty"`         // requires Presence.Read.All
+	UserProfileEnabled     *bool   `json:"user_profile_enabled,omitempty"`     // requires User.ReadBasic.All
+	UserProfileExtended    *bool   `json:"user_profile_extended,omitempty"`    // requires User.Read.All (admin consent)
+	TeamsChannelsEnabled   *bool   `json:"teams_channels_enabled,omitempty"`   // requires Team.ReadBasic.All + Channel.ReadBasic.All + ChannelMessage.Read.All + ChannelMessage.Send + ChannelMessage.ReadWrite
+	ChannelMentionsEnabled *bool   `json:"channel_mentions_enabled,omitempty"` // requires TeamMember.Read.All to load members for autocomplete in channels
+	ChannelMsgRefreshMin   *int    `json:"channel_msg_refresh_min,omitempty"`
+	SqliteEnabled          *bool   `json:"sqlite_enabled,omitempty"`
 	ExternalEditor         *string `json:"external_editor,omitempty"`
 	BrowserCommand         *string `json:"browser_command,omitempty"`
 	YoutrackCommand        *string `json:"youtrack_command,omitempty"`
@@ -252,6 +255,11 @@ func InitConfig() {
 	if cfg.ClientID == nil {
 		id := defaultClientID
 		cfg.ClientID = &id
+		modified = true
+	}
+	if cfg.TenantID == nil {
+		id := defaultTenantID
+		cfg.TenantID = &id
 		modified = true
 	}
 	if cfg.NotificationMode == nil {
@@ -385,6 +393,26 @@ func ResolveClientID() string {
 		return *cfg.ClientID
 	}
 	return defaultClientID
+}
+
+// ResolveTenantID returns the authority tenant using the precedence:
+//  1. TENANT_ID environment variable (loads .env first)
+//  2. config.json → tenant_id
+//  3. Built-in default ("common")
+func ResolveTenantID() string {
+	// Load .env file if present; ignore errors (file may not exist).
+	_ = godotenv.Load()
+
+	if id := strings.TrimSpace(os.Getenv("TENANT_ID")); id != "" {
+		return id
+	}
+	cfg := LoadConfig()
+	if cfg != nil && cfg.TenantID != nil {
+		if id := strings.TrimSpace(*cfg.TenantID); id != "" {
+			return id
+		}
+	}
+	return defaultTenantID
 }
 
 // ResolveMessageLimit returns the number of messages to fetch, using precedence:
@@ -580,4 +608,3 @@ func ResolveGitlabCommand() string {
 	}
 	return ""
 }
-

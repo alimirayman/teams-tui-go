@@ -75,23 +75,26 @@ go install github.com/nospor/teams-tui-go@latest
 
 ## Configuration
 
-### Client ID (optional)
+### Client ID and Tenant ID (optional)
 
 By default the app uses Microsoft's public Teams client ID. To use your own Azure AD app registration:
 
 1. Follow the instructions in [AZURE_SETUP.md](AZURE_SETUP.md).
-2. Set your client ID using one of:
+2. Set your client ID and tenant ID using one of:
 
    **Option A — environment variable:**
    ```bash
    cp .env.example .env
-   # Edit .env and set CLIENT_ID=<your-client-id>
+   # Edit .env and set:
+   # CLIENT_ID=<your-client-id>
+   # TENANT_ID=<your-directory-tenant-id>
    ```
 
-   **Option B — config file** (`~/.config/teams-tui-go/config.json`):
+   **Option B — config file** (`~/Library/Application Support/teams-tui-go/config.json` on macOS, `~/.config/teams-tui-go/config.json` on Linux):
    ```json
    {
-     "client_id": "your-client-id-here"
+     "client_id": "your-client-id-here",
+     "tenant_id": "your-directory-tenant-id-here"
    }
    ```
 
@@ -373,7 +376,7 @@ The external editor command can be configured in your `config.json` via the `"ex
 
 | File                                          | Purpose                             |
 | --------------------------------------------- | ----------------------------------- |
-| `~/.config/teams-tui-go/config.json`           | Client ID, notification mode, limits |
+| App config dir `teams-tui-go/config.json`       | Client ID, tenant ID, notification mode, limits |
 | `~/.config/teams-tui-go/favourites.json`       | Pinned/favourite chat IDs           |
 | `~/.cache/teams-tui-go/token.json`             | OAuth2 access + refresh tokens      |
 | `~/.cache/teams-tui-go/profile.json`           | Cached user profile                 |
