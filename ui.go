@@ -376,10 +376,6 @@ func NewModel(app *App, clientID, userID string) Model {
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		tickCmd(),
-		func() tea.Msg {
-			fmt.Print("\x1b[?1004h") // Enable focus reporting
-			return nil
-		},
 	}
 	if m.app.Features.TeamsChannels {
 		m.app.TeamsDataLoading = true
@@ -1681,6 +1677,19 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "?":
 		m = m.openHelp()
 
+	case "v":
+		if !m.app.Features.FilePreviewInTerminal {
+			m.app.SetStatus("Image preview disabled in config", 4*time.Second)
+			break
+		}
+		for i := range m.app.Messages {
+			m.app.Messages[i].ProcessInlineImages()
+			if _, ok := firstPreviewableImageAttachmentIndex(m.app.Messages[i]); ok {
+				return m.openMessagePopup(i, true)
+			}
+		}
+		m.app.SetStatus("No image found in the loaded messages", 4*time.Second)
+
 	case "i":
 		if m.app.SelectedIndex < 0 && m.channelSelectedIndex < 0 {
 			break
@@ -2229,7 +2238,12 @@ func (m Model) handleMessagePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 						}
 						destPath := filepath.Join(getDownloadsDir(), name)
 						m.app.SetStatus("Downloading: "+name+" ...", 0)
-						return m, downloadFileCmd(m.clientID, *att.ContentURL, destPath)
+						fileURL := m.attachmentContentURL(msgObj, att)
+						if fileURL == "" || strings.HasPrefix(fileURL, "../") {
+							m.app.SetStatus("No downloadable URL for this attachment", 4*time.Second)
+							return m, nil
+						}
+						return m, downloadFileCmd(m.clientID, fileURL, destPath)
 					} else {
 						m.app.SetStatus("No download URL for this attachment", 3*time.Second)
 					}
@@ -2460,18 +2474,7 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	case "v":
 		if len(m.app.Messages) > 0 && m.app.MessageSelectedIndex < len(m.app.Messages) {
-			m.app.Messages[m.app.MessageSelectedIndex].ProcessInlineImages()
-			m.app.MessagePopupMode = true
-			m.app.MessagePopupScrollOffset = 0
-			m.app.AttachmentCursorMode = false
-			m.app.AttachmentSelectedIndex = 0
-			if m.app.Features.FilePreviewInTerminal {
-				if idx, ok := firstPreviewableImageAttachmentIndex(m.app.Messages[m.app.MessageSelectedIndex]); ok {
-					m.app.AttachmentCursorMode = true
-					m.app.AttachmentSelectedIndex = idx
-					return m, m.checkAndTriggerPreviewDownload()
-				}
-			}
+			return m.openMessagePopup(m.app.MessageSelectedIndex, true)
 		}
 		return m, nil
 
@@ -2884,7 +2887,8 @@ func (m Model) View() string {
 			if m.app.AttachmentSelectedIndex >= 0 && m.app.AttachmentSelectedIndex < len(vAtts) {
 				att := vAtts[m.app.AttachmentSelectedIndex]
 				if isImageAttachment(att) {
-					if cp, err := getAttachmentCachePath(att); err == nil {
+					resolvedAtt := m.resolvedAttachment(msgObj, att)
+					if cp, err := getAttachmentCachePath(resolvedAtt); err == nil {
 						if _, err := os.Stat(cp); err == nil {
 							popupW := m.width * 85 / 100
 							popupH := m.height * 80 / 100
@@ -3844,9 +3848,9 @@ func (m Model) statusHint() string {
 	case m.app.SelectedIndex < 0 && m.channelSelectedIndex < 0:
 		return "Sleep: j/k select, h/? help, q quit"
 	case m.channelSelectedIndex >= 0:
-		return "Channel: j/k move, Tab chats, i compose, m select, h hide, ? help"
+		return "Channel: j/k move, Tab chats, i compose, m select, v image, h hide, ? help"
 	default:
-		return "Chat: j/k move, Tab channels, i compose, m select, / search, h/? help"
+		return "Chat: j/k move, Tab channels, i compose, m select, v image, / search, h/? help"
 	}
 }
 
@@ -5726,6 +5730,61 @@ func firstPreviewableImageAttachmentIndex(msg Message) (int, bool) {
 	return 0, false
 }
 
+func (m Model) openMessagePopup(messageIndex int, autoSelectImage bool) (Model, tea.Cmd) {
+	if messageIndex < 0 || messageIndex >= len(m.app.Messages) {
+		return m, nil
+	}
+
+	m.app.Messages[messageIndex].ProcessInlineImages()
+	m.app.MessageSelectedIndex = messageIndex
+	m.app.MessagePopupMode = true
+	m.app.MessagePopupScrollOffset = 0
+	m.app.AttachmentCursorMode = false
+	m.app.AttachmentSelectedIndex = 0
+
+	if autoSelectImage && m.app.Features.FilePreviewInTerminal {
+		if idx, ok := firstPreviewableImageAttachmentIndex(m.app.Messages[messageIndex]); ok {
+			m.app.AttachmentCursorMode = true
+			m.app.AttachmentSelectedIndex = idx
+			return m, m.checkAndTriggerPreviewDownload()
+		}
+	}
+	return m, nil
+}
+
+func resolveAttachmentContentURL(msg Message, att MessageAttachment, chatID, teamID, channelID string) string {
+	if att.ContentURL == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(*att.ContentURL)
+	if raw == "" || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "http://") {
+		return raw
+	}
+	if strings.HasPrefix(raw, "/") {
+		return graphAPIBase + raw
+	}
+
+	relative := strings.TrimPrefix(raw, "../")
+	if !strings.HasPrefix(relative, "hostedContents/") {
+		return raw
+	}
+
+	var resourcePath string
+	if teamID != "" && channelID != "" {
+		if msg.IsReply && msg.ReplyToID != "" {
+			resourcePath = fmt.Sprintf("/teams/%s/channels/%s/messages/%s/replies/%s", teamID, channelID, msg.ReplyToID, msg.ID)
+		} else {
+			resourcePath = fmt.Sprintf("/teams/%s/channels/%s/messages/%s", teamID, channelID, msg.ID)
+		}
+	} else if chatID != "" {
+		resourcePath = fmt.Sprintf("/chats/%s/messages/%s", chatID, msg.ID)
+	}
+	if resourcePath == "" {
+		return raw
+	}
+	return graphAPIBase + resourcePath + "/" + relative
+}
+
 func (m Model) renderMessagePopup(w, h int) string {
 	if len(m.app.Messages) == 0 || m.app.MessageSelectedIndex < 0 || m.app.MessageSelectedIndex >= len(m.app.Messages) {
 		return ""
@@ -5769,7 +5828,8 @@ func (m Model) renderMessagePopup(w, h int) string {
 				att := vAtts[m.app.AttachmentSelectedIndex]
 				if isImageAttachment(att) {
 					showImagePreview = true
-					if cp, err := getAttachmentCachePath(att); err == nil {
+					resolvedAtt := m.resolvedAttachment(msgObj, att)
+					if cp, err := getAttachmentCachePath(resolvedAtt); err == nil {
 						if _, err := os.Stat(cp); err != nil {
 							previewDownloading = true
 						}
@@ -6095,6 +6155,7 @@ func (m Model) getHelpContentLines() []string {
 			{"k / ↑", "Navigate list up (within section)"},
 			{"Tab", "Switch between Chats & Channels"},
 			{"m", "Enter message selection mode"},
+			{"v", "Preview the newest image in loaded messages"},
 			{"i", "Compose new message"},
 			{"c", "Open chat search / open chat"},
 			{"/", "Search message history"},
@@ -6621,11 +6682,14 @@ func (m Model) checkAndTriggerPreviewDownload() tea.Cmd {
 		// Not an image, clear any displayed preview
 		return clearKittyImagesCmd()
 	}
-	if att.ContentURL == nil || *att.ContentURL == "" {
+	fileURL := m.attachmentContentURL(msgObj, att)
+	if fileURL == "" || strings.HasPrefix(fileURL, "../") {
 		return nil
 	}
+	resolvedAtt := att
+	resolvedAtt.ContentURL = &fileURL
 
-	cachePath, err := getAttachmentCachePath(att)
+	cachePath, err := getAttachmentCachePath(resolvedAtt)
 	if err != nil {
 		return nil
 	}
@@ -6639,7 +6703,31 @@ func (m Model) checkAndTriggerPreviewDownload() tea.Cmd {
 	}
 
 	// Download in background
-	return downloadPreviewCmd(m.clientID, *att.ContentURL, cachePath)
+	return downloadPreviewCmd(m.clientID, fileURL, cachePath)
+}
+
+func (m Model) attachmentContentURL(msg Message, att MessageAttachment) string {
+	chatID := ""
+	if m.channelSelectedIndex < 0 {
+		if chat := m.app.GetSelectedChat(); chat != nil {
+			chatID = chat.ID
+		}
+	}
+	return resolveAttachmentContentURL(
+		msg,
+		att,
+		chatID,
+		m.app.SelectedChannelTeamID,
+		m.app.SelectedChannelID,
+	)
+}
+
+func (m Model) resolvedAttachment(msg Message, att MessageAttachment) MessageAttachment {
+	fileURL := m.attachmentContentURL(msg, att)
+	if fileURL != "" {
+		att.ContentURL = &fileURL
+	}
+	return att
 }
 
 // getCursorPos calculates the absolute cursor index in runes inside the textarea's value.

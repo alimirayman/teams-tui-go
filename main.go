@@ -349,7 +349,6 @@ func loadChatPresenceCmd(clientID string, userIDs []string) tea.Cmd {
 	}
 }
 
-
 // loadUserProfileCmd fetches the full profile for a user by their Azure AD user ID.
 // Requires User.ReadBasic.All (or User.Read.All for extended info); returns MsgUserProfileLoaded.
 func loadUserProfileCmd(clientID, userID string) tea.Cmd {
@@ -722,7 +721,6 @@ func main() {
 	model.favourites = LoadFavourites()
 	model.unhiddenChannels = LoadUnhiddenChannels()
 
-
 	// Fetch any favourited chats that weren't returned by the regular API call
 	// (e.g. chats with very old activity that fell outside chat_limit).
 	// We do this concurrently to keep startup fast.
@@ -780,9 +778,25 @@ func main() {
 	model = model.rebuildChatList()
 	model = model.writeAppState()
 
-	// 9. Start Bubble Tea program.
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	// Match the grapheme-aware width calculations used by Lip Gloss. This is
+	// especially important for Indic scripts, whose combining characters and
+	// conjuncts otherwise advance differently in the terminal and renderer.
+	_ = writeTerminalSequence(os.Stdout, enableGraphemeClusters)
+	cleanupTerminal := func() {
+		_ = writeTerminalSequence(os.Stdout, "\x1b_Ga=d,d=a\x1b\\"+disableGraphemeClusters)
+	}
+	defer cleanupTerminal()
+
+	// 9. Start Bubble Tea with atomic repaints to avoid partially drawn frames.
+	p := tea.NewProgram(
+		model,
+		tea.WithAltScreen(),
+		tea.WithReportFocus(),
+		tea.WithOutput(newSynchronizedWriter(os.Stdout)),
+		tea.WithFPS(30),
+	)
 	if _, err := p.Run(); err != nil {
+		cleanupTerminal()
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		os.Exit(1)
 	}

@@ -9,7 +9,6 @@ import (
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -192,7 +191,7 @@ func kittyImageSequence(filePath string, x, y, cols, rows int) string {
 // clearKittyImagesCmd returns a Bubble Tea command to clear all displayed Kitty images.
 func clearKittyImagesCmd() tea.Cmd {
 	return func() tea.Msg {
-		os.Stdout.Write([]byte("\x1b_Ga=d,d=a\x1b\\"))
+		_ = writeTerminalSequence(os.Stdout, "\x1b_Ga=d,d=a\x1b\\")
 		return nil
 	}
 }
