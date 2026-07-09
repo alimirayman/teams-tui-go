@@ -5,8 +5,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +18,70 @@ import (
 type PastedImage struct {
 	Bytes       []byte
 	ContentType string // e.g. "image/png", "image/jpeg"
+}
+
+// localImagePathsFromPaste returns local image files only when the entire
+// pasted payload consists of valid paths. Ordinary pasted text is untouched.
+func localImagePathsFromPaste(raw string) []string {
+	if path, ok := normalizePastedImagePath(raw); ok {
+		return []string{path}
+	}
+
+	lines := strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == '\r' })
+	if len(lines) < 2 {
+		return nil
+	}
+	paths := make([]string, 0, len(lines))
+	for _, line := range lines {
+		path, ok := normalizePastedImagePath(line)
+		if !ok {
+			return nil
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func normalizePastedImagePath(raw string) (string, bool) {
+	path := strings.TrimSpace(raw)
+	if path == "" {
+		return "", false
+	}
+	if unquoted, err := strconv.Unquote(path); err == nil {
+		path = unquoted
+	} else {
+		path = strings.Trim(path, "'\"")
+	}
+	if strings.HasPrefix(path, "file://") {
+		parsed, err := url.Parse(path)
+		if err != nil || parsed.Host != "" && parsed.Host != "localhost" {
+			return "", false
+		}
+		path, err = url.PathUnescape(parsed.Path)
+		if err != nil {
+			return "", false
+		}
+	}
+	path = strings.ReplaceAll(path, `\ `, " ")
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", false
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+	}
+	path = filepath.Clean(path)
+
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif":
+	default:
+		return "", false
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	return path, true
 }
 
 // GetClipboardImage tries to read an image from the clipboard.

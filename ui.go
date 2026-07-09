@@ -71,6 +71,12 @@ type MsgFileAttached struct {
 	Err         error
 }
 
+type MsgPastedImagesAttached struct {
+	Images     []PastedImage
+	Generation uint64
+	Err        error
+}
+
 // MsgMessagesLoaded is sent when messages for a specific chat have loaded.
 type MsgMessagesLoaded struct {
 	ChatIndex int
@@ -326,6 +332,8 @@ type Model struct {
 	kittyPreparedCache   map[string]kittyPreparedImage
 	kittyTransmitted     map[string]bool
 	navigationGeneration uint64
+	composeGeneration    uint64
+	pendingImagePastes   int
 }
 
 // NewModel creates the initial Bubble Tea model.
@@ -1524,6 +1532,34 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 		m.app.SkipTextareaUpdate = true
 		return m, nil
 
+	case MsgPastedImagesAttached:
+		if msg.Generation != m.composeGeneration {
+			break
+		}
+		if m.pendingImagePastes > 0 {
+			m.pendingImagePastes--
+		}
+		if msg.Err != nil {
+			m.app.SetStatus("Image paste failed: "+msg.Err.Error(), 5*time.Second)
+			return m, nil
+		}
+		if !m.app.InputMode {
+			break
+		}
+		for _, image := range msg.Images {
+			m.app.ComposedImages = append(m.app.ComposedImages, image)
+			placeholder := fmt.Sprintf("[Image %d]", len(m.app.ComposedImages))
+			m.textarea.InsertString(placeholder)
+		}
+		m.app.InputBuffer = m.textarea.Value()
+		status := fmt.Sprintf("Attached %d pasted images", len(msg.Images))
+		if len(msg.Images) == 1 {
+			status = "Attached pasted image"
+		}
+		m.app.SetStatus(status, 3*time.Second)
+		m.app.SkipTextareaUpdate = true
+		return m, nil
+
 	// ── Keyboard input ────────────────────────────────────────────────────
 	case tea.KeyMsg:
 		m = m.markRead()
@@ -2065,6 +2101,15 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if msg.Paste {
+		if paths := localImagePathsFromPaste(string(msg.Runes)); len(paths) > 0 {
+			m.pendingImagePastes++
+			m.app.SkipTextareaUpdate = true
+			m.app.SetStatus("Attaching pasted image...", 0)
+			return m, attachPastedImagesFromFilepathsCmd(paths, m.composeGeneration)
+		}
+	}
+
 	if m.app.MentionPopupMode {
 		switch msg.String() {
 		case "esc":
@@ -2139,6 +2184,8 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
+		m.composeGeneration++
+		m.pendingImagePastes = 0
 		m.app.InputMode = false
 		m.app.InputBuffer = ""
 		m.app.EditingMessageID = nil
@@ -2177,13 +2224,27 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.app.SkipTextareaUpdate = true
 			return m, nil
 		}
+		if clipboardText, readErr := clipboard.ReadAll(); readErr == nil {
+			if paths := localImagePathsFromPaste(clipboardText); len(paths) > 0 {
+				m.pendingImagePastes++
+				m.app.SkipTextareaUpdate = true
+				m.app.SetStatus("Attaching pasted image...", 0)
+				return m, attachPastedImagesFromFilepathsCmd(paths, m.composeGeneration)
+			}
+		}
 
 	case "enter":
+		if m.pendingImagePastes > 0 {
+			m.app.SetStatus("Image is still attaching...", 2*time.Second)
+			m.app.SkipTextareaUpdate = true
+			return m, nil
+		}
 		content := strings.Trim(m.textarea.Value(), "\n\r")
 		if content == "" {
 			return m, nil
 		}
 		m.app.InputMode = false
+		m.composeGeneration++
 		m.app.InputBuffer = ""
 		m.textarea.Reset()
 
@@ -3268,7 +3329,7 @@ func (m Model) renderRightPanel(w, h int) string {
 	m.textarea.SetHeight(inputH - 2)
 
 	// Build input box contents — add quote preview when replying.
-	hintText := "Type your message (Enter: send, Alt+Enter: new line, ESC: cancel, @: mention, paste IMAGE"
+	hintText := "Type your message (Enter: send, Alt+Enter: new line, ESC: cancel, @: mention, Cmd/Ctrl+V: paste image"
 	if m.app.Features.FileUpload {
 		hintText += ", Ctrl+f: attach file"
 	}
@@ -4137,7 +4198,7 @@ func (m Model) statusHint() string {
 	case m.app.MessagePopupMode:
 		return "Message: j/k next, J/K scroll, Tab attachments, q/Esc close"
 	case m.app.InputMode:
-		return "Compose: Enter send, Alt+Enter newline, Ctrl+f attach, Ctrl+g editor, Esc cancel"
+		return "Compose: Enter send, Alt+Enter newline, Cmd/Ctrl+V image, Ctrl+f file, Ctrl+g editor, Esc cancel"
 	case m.app.UserSearchPopupMode:
 		return "Find chat: type, j/k move, Enter open, Esc close"
 	case m.app.SearchPopupMode:

@@ -303,7 +303,7 @@ When you press `e` to edit an existing message the edit box is pre-filled with t
 
 ### Clipboard Image Pasting
 
-When in compose mode (`i`), you can paste images (PNG/JPEG) directly from your system clipboard using **`Ctrl+V`**.
+When in compose mode (`i`), you can paste images (PNG/JPEG) directly from your system clipboard using **`Ctrl+V`**. Native terminal paste (`Cmd+V` on macOS) is also recognized when cmux or the terminal provides a temporary local image path.
 - A placeholder like `[Image 1]` will be inserted into the text field.
 - You can move, copy, or delete this placeholder to control where the image appears in the sent message. If deleted, the image won't be sent.
 - When the message is sent, the image is automatically base64-encoded and uploaded inline.

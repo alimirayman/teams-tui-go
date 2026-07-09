@@ -506,6 +506,37 @@ func attachFileFromFilepathCmd(path string) tea.Cmd {
 	}
 }
 
+func attachPastedImagesFromFilepathsCmd(paths []string, generation uint64) tea.Cmd {
+	return func() tea.Msg {
+		images := make([]PastedImage, 0, len(paths))
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return MsgPastedImagesAttached{Generation: generation, Err: err}
+			}
+			contentType := http.DetectContentType(data)
+			switch strings.ToLower(filepath.Ext(path)) {
+			case ".png":
+				contentType = "image/png"
+			case ".jpg", ".jpeg":
+				contentType = "image/jpeg"
+			case ".gif":
+				contentType = "image/gif"
+			case ".webp":
+				contentType = "image/webp"
+			}
+			if !strings.HasPrefix(contentType, "image/") {
+				return MsgPastedImagesAttached{
+					Generation: generation,
+					Err:        fmt.Errorf("%s is not a supported image", filepath.Base(path)),
+				}
+			}
+			images = append(images, PastedImage{Bytes: data, ContentType: contentType})
+		}
+		return MsgPastedImagesAttached{Images: images, Generation: generation}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Desktop notification
 // ---------------------------------------------------------------------------
