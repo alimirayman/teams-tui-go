@@ -57,15 +57,15 @@ type ChatViewpoint struct {
 
 // Message represents a single message in a chat.
 type Message struct {
-	ID              string              `json:"id"`
-	CreatedDateTime string              `json:"createdDateTime"`
-	MessageType     string              `json:"messageType,omitempty"`
-	Subject         string              `json:"subject,omitempty"`
-	From            *MessageFrom        `json:"from,omitempty"`
-	Body            *MessageBody        `json:"body,omitempty"`
-	Attachments     []MessageAttachment `json:"attachments,omitempty"`
-	Reactions       []MessageReaction   `json:"reactions,omitempty"`
-	Mentions        []MessageMention    `json:"mentions,omitempty"`
+	ID                      string              `json:"id"`
+	CreatedDateTime         string              `json:"createdDateTime"`
+	MessageType             string              `json:"messageType,omitempty"`
+	Subject                 string              `json:"subject,omitempty"`
+	From                    *MessageFrom        `json:"from,omitempty"`
+	Body                    *MessageBody        `json:"body,omitempty"`
+	Attachments             []MessageAttachment `json:"attachments,omitempty"`
+	Reactions               []MessageReaction   `json:"reactions,omitempty"`
+	Mentions                []MessageMention    `json:"mentions,omitempty"`
 	PlainTextCached         *string             `json:"-"`
 	NormalizedTextCached    *string             `json:"-"`
 	NormalizedSubjectCached *string             `json:"-"`
@@ -175,11 +175,11 @@ func ExtractInlineImages(htmlContent string) []MessageAttachment {
 						name += ".png"
 					}
 					contentType := "image/png"
-					
+
 					srcCopy := src
 					nameCopy := name
 					contentTypeCopy := contentType
-					
+
 					list = append(list, MessageAttachment{
 						ID:          fmt.Sprintf("inline-img-%d", imgCounter),
 						Name:        &nameCopy,
@@ -1966,8 +1966,12 @@ func HTMLToText(htmlContent string, attachments []MessageAttachment, mentions []
 						}
 						continue
 					}
-					orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("Attachment")
-					sb.WriteString("📎 " + orangeText)
+					name := "Attachment"
+					if att.Name != nil && strings.TrimSpace(*att.Name) != "" {
+						name = strings.TrimSpace(*att.Name)
+					}
+					orangeText := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render(name)
+					sb.WriteString(getAttachmentIcon(att) + " " + orangeText)
 					lastChar = 't'
 				}
 

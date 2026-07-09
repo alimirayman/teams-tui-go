@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -17,9 +18,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/gen2brain/beeep"
 	"github.com/nospor/teams-tui-go/filepicker"
-	"regexp"
+	"golang.org/x/net/html"
 )
 
 // ---------------------------------------------------------------------------
@@ -2960,7 +2962,7 @@ func (m Model) renderRightPanel(w, h int) string {
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(colGreen).
 			Render(lipgloss.JoinVertical(lipgloss.Left,
-				lipgloss.NewStyle().Foreground(colDimGray).Render(title),
+				fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(title), w),
 				msgContent,
 			))
 	}
@@ -3011,7 +3013,7 @@ func (m Model) renderRightPanel(w, h int) string {
 			} else {
 				line = lipgloss.NewStyle().Foreground(lipgloss.Color("#E2E2E2")).Render("  " + line)
 			}
-			items = append(items, line)
+			items = append(items, fitLine(line, w-4))
 		}
 
 		mentionView = lipgloss.NewStyle().
@@ -3046,7 +3048,7 @@ func (m Model) renderRightPanel(w, h int) string {
 	}
 	msgBox := normalBorder.Width(w).Height(msgH).
 		Render(lipgloss.JoinVertical(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(colDimGray).Render(title),
+			fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(title), w),
 			msgContent,
 		))
 
@@ -3060,7 +3062,7 @@ func (m Model) renderRightPanel(w, h int) string {
 	}
 	hintText += ", Ctrl+g: open external editor)"
 
-	hintLine := lipgloss.NewStyle().Foreground(colDimGray).Render(hintText)
+	hintLine := fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(hintText), w)
 	inputParts := []string{hintLine}
 
 	if m.app.ReplyToMessage != nil {
@@ -3086,7 +3088,7 @@ func (m Model) renderRightPanel(w, h int) string {
 		name := lipgloss.NewStyle().Foreground(lipgloss.Color("#7EC8E3")).Bold(true).Render(sender)
 		text := lipgloss.NewStyle().Foreground(lipgloss.Color("#6C7A89")).Render(": " + preview)
 		quoteLine := bar + " " + name + text
-		inputParts = append(inputParts, quoteLine)
+		inputParts = append(inputParts, fitLine(quoteLine, w))
 		// Separator between quote and textarea.
 		inputParts = append(inputParts, lipgloss.NewStyle().Foreground(colDimGray).Render(strings.Repeat("─", w)))
 		m.textarea.SetHeight(inputH - 4) // hint + quote + separator lines
@@ -3494,7 +3496,7 @@ func (m Model) renderChatList(w, h int) string {
 		}
 	}
 
-	return strings.Join(lines, "\n")
+	return strings.Join(fitLines(lines, w), "\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -3647,6 +3649,15 @@ func (m Model) renderMessages(w, h int) string {
 			}
 		}
 
+		attachmentSummary := renderAttachmentSummary(msg)
+		if attachmentSummary != "" {
+			if body != "" {
+				body += "\n" + attachmentSummary
+			} else {
+				body = attachmentSummary
+			}
+		}
+
 		// Replies from others (or replies in chats when not ours) are left-indented.
 		// In channels, replies are always right-aligned, so they do not have left indentation.
 		replyIndent := ""
@@ -3759,7 +3770,7 @@ func (m Model) renderMessages(w, h int) string {
 		start2 = len(lines)
 	}
 
-	return strings.Join(lines[start2:end], "\n")
+	return strings.Join(fitLines(lines[start2:end], w), "\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -3790,7 +3801,7 @@ func (m Model) renderStatusBar(w int) string {
 	if m.app.LoadingMessages && len(m.app.Messages) > 0 {
 		text = "⏳ Loading older messages... | " + text
 	}
-	text = truncate(text, w-4)
+	text = fitLine(text, w-4)
 	if m.app.VisualBellActive() {
 		return bellBorder.Width(w - 2).Height(1).Render(text)
 	}
@@ -3846,14 +3857,25 @@ func msgPanelWidth(total int) int {
 }
 
 func truncate(s string, maxLen int) string {
-	if maxLen <= 0 {
+	return fitLine(s, maxLen)
+}
+
+func fitLine(s string, width int) string {
+	if width <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) <= maxLen {
+	if ansi.StringWidth(s) <= width {
 		return s
 	}
-	return string(r[:maxLen-1]) + "…"
+	return ansi.Truncate(s, width, "…")
+}
+
+func fitLines(lines []string, width int) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = fitLine(line, width)
+	}
+	return out
 }
 
 // padLeft right-aligns text within width w by prepending spaces.
@@ -3879,6 +3901,64 @@ func wordWrap(s string, maxW int) []string {
 		lines[i] = strings.TrimRight(lines[i], " ")
 	}
 	return lines
+}
+
+func renderAttachmentSummary(msg Message) string {
+	vAtts := viewableAttachments(msg)
+	if len(vAtts) == 0 {
+		return ""
+	}
+
+	bodyContent := ""
+	if msg.Body != nil && msg.Body.Content != nil {
+		bodyContent = *msg.Body.Content
+	}
+	renderedAttachmentIDs := attachmentIDsRenderedInBody(bodyContent)
+
+	attStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700"))
+	lines := make([]string, 0, len(vAtts))
+	for _, att := range vAtts {
+		if strings.HasPrefix(att.ID, "inline-img-") || renderedAttachmentIDs[att.ID] {
+			continue
+		}
+
+		name := "Attachment"
+		if att.Name != nil && strings.TrimSpace(*att.Name) != "" {
+			name = strings.TrimSpace(*att.Name)
+		}
+
+		icon := getAttachmentIcon(att)
+		if icon == "" {
+			icon = "📎"
+		}
+		lines = append(lines, icon+" "+attStyle.Render(name))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func attachmentIDsRenderedInBody(htmlContent string) map[string]bool {
+	ids := make(map[string]bool)
+	if htmlContent == "" {
+		return ids
+	}
+
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlContent))
+	for {
+		tt := tokenizer.Next()
+		if tt == html.ErrorToken {
+			return ids
+		}
+		token := tokenizer.Token()
+		if token.Data != "attachment" {
+			continue
+		}
+		for _, attr := range token.Attr {
+			if attr.Key == "id" && attr.Val != "" {
+				ids[attr.Val] = true
+				break
+			}
+		}
+	}
 }
 
 // updateScroll recalculates scroll bounds after messages change.
@@ -5856,15 +5936,15 @@ func (m Model) renderMessagePopup(w, h int) string {
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(previewText)
 
-		leftPanelBodyStr := strings.Join(finalLines[:targetH], "\n")
+		leftPanelBodyStr := strings.Join(fitLines(finalLines[:targetH], contentW), "\n")
 		leftAndRight := lipgloss.JoinHorizontal(lipgloss.Top,
 			lipgloss.NewStyle().Width(contentW).Render(leftPanelBodyStr),
 			"  ",
 			rightPanelStr,
 		)
-		combinedContent = leftAndRight + "\n" + footer
+		combinedContent = leftAndRight + "\n" + fitLine(footer, innerW)
 	} else {
-		combinedContent = strings.Join(finalLines, "\n")
+		combinedContent = strings.Join(fitLines(finalLines, innerW), "\n")
 	}
 
 	box := lipgloss.NewStyle().
