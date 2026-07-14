@@ -230,6 +230,45 @@ func kittyPlaceSequence(image kittyPreparedImage, imageID, placementID uint32, x
 	)
 }
 
+// kittyDirectDisplaySequence transmits and displays an image in one operation.
+// Ghostty-backed terminals are more reliable with this form for large popup
+// previews than with a separate transmit followed by a placement request.
+func kittyDirectDisplaySequence(image kittyPreparedImage, imageID, placementID uint32, x, y int) string {
+	if image.Encoded == "" || imageID == 0 || image.Cols <= 0 || image.Rows <= 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	targetX := x + image.PadX
+	targetY := y + image.PadY
+	sb.WriteString(fmt.Sprintf("\x1b7\x1b[%d;%dH", targetY+1, targetX+1))
+
+	const chunkSize = 4096
+	for i := 0; i < len(image.Encoded); i += chunkSize {
+		end := min(i+chunkSize, len(image.Encoded))
+		more := 1
+		if end == len(image.Encoded) {
+			more = 0
+		}
+		if i == 0 {
+			sb.WriteString(fmt.Sprintf(
+				"\x1b_Ga=T,f=100,i=%d,p=%d,q=2,m=%d,c=%d,r=%d,C=1;%s\x1b\\",
+				imageID,
+				placementID,
+				more,
+				image.Cols,
+				image.Rows,
+				image.Encoded[i:end],
+			))
+		} else {
+			sb.WriteString(fmt.Sprintf("\x1b_Gq=2,m=%d;%s\x1b\\", more, image.Encoded[i:end]))
+		}
+	}
+
+	sb.WriteString("\x1b8")
+	return sb.String()
+}
+
 // kittyImageSequence retains the one-shot path used by the standalone preview command.
 func kittyImageSequence(filePath string, x, y, cols, rows int) string {
 	prepared, err := prepareKittyImage(filePath, cols, rows)

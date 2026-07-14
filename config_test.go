@@ -401,7 +401,7 @@ func TestBuildScopes(t *testing.T) {
 			t.Errorf("basic scope %q missing from %q", required, scopes)
 		}
 	}
-	for _, unexpected := range []string{"Presence.Read.All", "Files.Read", "User.ReadBasic.All", "User.Read.All", "Team.ReadBasic.All", "TeamMember.Read.All"} {
+	for _, unexpected := range []string{"Presence.Read.All", "Files.Read.All", "Files.ReadWrite", "User.ReadBasic.All", "User.Read.All", "Team.ReadBasic.All", "TeamMember.Read.All"} {
 		for _, s := range splitScopes(scopes) {
 			if s == unexpected {
 				t.Errorf("unexpected scope %q present when feature is disabled", unexpected)
@@ -452,6 +452,29 @@ func TestBuildScopes(t *testing.T) {
 	}
 	if !foundMentions {
 		t.Errorf("TeamMember.Read.All missing when channel_mentions_enabled=true, scopes=%q", scopes3)
+	}
+
+	// Case 4: Previewing other participants' Teams attachments requires
+	// read-only access to every file the signed-in user can already access.
+	filePreviewOn := true
+	fileUploadOn := true
+	cfg.FilePreviewEnabled = &filePreviewOn
+	cfg.FileUploadEnabled = &fileUploadOn
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	scopes4 := splitScopes(BuildScopes())
+	for _, required := range []string{"Files.Read.All", "Files.ReadWrite"} {
+		found := false
+		for _, scope := range scopes4 {
+			if scope == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s missing when file features are enabled, scopes=%q", required, scopes4)
+		}
 	}
 	_ = cfgPath
 }

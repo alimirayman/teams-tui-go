@@ -104,7 +104,7 @@ Optional permissions are requested only when their matching config feature is en
 
 | Config key | Delegated permission | Purpose |
 | --- | --- | --- |
-| `file_preview_enabled` | `Files.Read` | Resolve and download OneDrive/SharePoint attachments |
+| `file_preview_enabled` | `Files.Read.All` | Read Teams attachments the signed-in user can access, including files owned by other participants |
 | `file_upload_enabled` | `Files.ReadWrite` | Upload chat and channel files |
 | `presence_enabled` | `Presence.Read.All` | Read user availability and activity |
 | `user_profile_enabled` | `User.ReadBasic.All` | Show basic sender profiles |
@@ -114,7 +114,7 @@ Optional permissions are requested only when their matching config feature is en
 
 `ChannelMessage.Read.All` and `User.Read.All` commonly require admin consent in organizational tenants.
 
-When permissions or feature flags change, remove the cached `token.json` from the platform cache directory and restart `teams` to perform a fresh device-code login.
+When permissions or feature flags change, `teams` detects a cached token that lacks the enabled scopes and starts a fresh device-code login. Removing the cached `token.json` remains a manual fallback.
 
 ## Configuration
 
@@ -224,6 +224,7 @@ Press `?` in the app for the contextual help popup.
 | `Tab` | Switch between chats and channels |
 | `K` / `J`, `PgUp` / `PgDn` | Scroll the timeline |
 | `Ctrl+u` / `Ctrl+d` | Scroll half a page |
+| Mouse wheel | Scroll the active message timeline without changing the selected chat or channel |
 | `m` | Enter message-selection mode |
 | `z` | Expand or collapse the message near the viewport |
 | `i` | Compose a message |
@@ -263,7 +264,9 @@ Press `?` in the app for the contextual help popup.
 | Key | Action |
 | --- | --- |
 | `Enter` | Send |
-| `Alt+Enter` | Insert a newline |
+| `Shift+Enter` | Insert a newline in Kitty-keyboard-compatible terminals such as cmux/Ghostty |
+| `Alt+Enter` | Insert a newline fallback |
+| `Cmd+/` | Toggle Important message mode on macOS (`Alt+/` fallback) |
 | `@` | Open mention autocomplete |
 | `Ctrl+v` | Attach clipboard image data or a copied filepath |
 | `Cmd+v` | Attach pasted or dropped local files supplied by the terminal |
@@ -318,7 +321,7 @@ On cmux/macOS, normal `Cmd+v` works when cmux or the terminal sends a filepath. 
 
 With both `file_preview_enabled` and `file_preview_in_terminal` enabled, image attachments download into the cache and render automatically in the timeline on Kitty-compatible terminals. Press `v` for a larger view.
 
-If only a filename appears, verify the feature flags, `Files.Read` permission, fresh authentication, and terminal Kitty Graphics support.
+If only a filename appears, verify the feature flags, `Files.Read.All` permission, fresh authentication, and terminal Kitty Graphics support. Failed previews show a retry or permission message instead of loading forever.
 
 ### Files
 
@@ -358,7 +361,7 @@ Set `notification_mode` to `System` or `Both`, leave `teams` running, and verify
 
 ### Images Show Only Filenames
 
-Enable both preview flags, grant `Files.Read`, re-authenticate, and use a Kitty-compatible terminal. The attachment remains downloadable even when the terminal cannot draw it inline.
+Enable both preview flags, grant `Files.Read.All`, re-authenticate, and use a Kitty-compatible terminal. The attachment remains downloadable even when the terminal cannot draw it inline.
 
 ### Image Preview Panel Is Empty
 

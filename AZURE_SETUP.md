@@ -98,9 +98,9 @@ In the message view popup (`v`), press **Tab** to enter attachment cursor mode. 
 
 | Permission | Type | Admin Consent | Purpose |
 |------------|------|---------------|---------|
-| `Files.Read` | Delegated | Not required | Download file attachments from Teams messages via the OneDrive/SharePoint API |
+| `Files.Read.All` | Delegated | Not required | Download Teams attachments the signed-in user can access, including files owned by other participants |
 
-> **Note**: Inline images embedded in message HTML may display without this permission. `Files.Read` is only required when downloading attachments via the `contentUrl` driveItem endpoint.
+> **Note**: Inline images embedded in message HTML may display without this permission. Reference attachments from another participant's OneDrive or SharePoint require `Files.Read.All`; it remains limited to files the signed-in user can already access.
 
 ---
 
@@ -200,7 +200,7 @@ Effect: Enables mentioning people inside Teams Channels. Type `@` in a channel m
 
 ## Re-authentication After Enabling Features
 
-When you enable a new feature in `config.json`, the **existing token does not automatically include the new permission**. You must force a fresh sign-in:
+When you enable a new feature in `config.json`, the existing token does not automatically gain the new permission. Current builds detect missing enabled-feature scopes and start a fresh device-code sign-in. If that does not happen, force it manually:
 
 ```bash
 # Delete the cached token

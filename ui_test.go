@@ -14,6 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+type testCSISequence []byte
+
 func testStringPtr(s string) *string { return &s }
 
 func TestFitLineFlattensEmbeddedNewlines(t *testing.T) {
@@ -154,6 +156,133 @@ func TestChatNavigationUsesCacheBeforeSettledLoad(t *testing.T) {
 	}
 }
 
+func TestMouseWheelScrollsChatTimelineWithoutChangingSelection(t *testing.T) {
+	firstName := "First"
+	secondName := "Second"
+	app := NewApp()
+	app.Chats = []Chat{
+		{ID: "first", CachedDisplayName: &firstName},
+		{ID: "second", CachedDisplayName: &secondName},
+	}
+	app.SelectedIndex = 1
+	app.ScrollOffset = 12
+	app.MaxScroll = 40
+	app.SnapToBottom = true
+	model := NewModel(app, "client-id", "user-id")
+
+	next, cmd := model.updateInternal(tea.MouseMsg(tea.MouseEvent{
+		X:      0,
+		Y:      5,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelUp,
+	}))
+	if cmd != nil {
+		t.Fatal("unexpected command while scrolling loaded chat messages")
+	}
+	if next.app.SelectedIndex != 1 || next.channelSelectedIndex != -1 {
+		t.Fatalf("mouse wheel changed chat selection: chat=%d channel=%d", next.app.SelectedIndex, next.channelSelectedIndex)
+	}
+	if next.app.ScrollOffset != 9 || next.app.SnapToBottom {
+		t.Fatalf("chat timeline scroll state = offset %d, snap %v", next.app.ScrollOffset, next.app.SnapToBottom)
+	}
+}
+
+func TestMouseWheelScrollsChannelTimelineWithoutChangingSelection(t *testing.T) {
+	app := NewApp()
+	app.Features.TeamsChannels = true
+	app.TeamsData = []TeamWithChannels{{
+		Team: Team{ID: "team", DisplayName: "Engineering"},
+		Channels: []Channel{
+			{ID: "general", DisplayName: "General"},
+			{ID: "releases", DisplayName: "Releases"},
+		},
+	}}
+	app.ScrollOffset = 7
+	app.MaxScroll = 20
+	model := NewModel(app, "client-id", "user-id")
+	model.channelSelectedIndex = 1
+	app.SelectedChannelTeamID = "team"
+	app.SelectedChannelID = "releases"
+
+	next, cmd := model.updateInternal(tea.MouseMsg(tea.MouseEvent{
+		X:      0,
+		Y:      5,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelDown,
+	}))
+	if cmd != nil {
+		t.Fatal("unexpected command while scrolling loaded channel messages")
+	}
+	if next.channelSelectedIndex != 1 {
+		t.Fatalf("mouse wheel changed channel selection to %d", next.channelSelectedIndex)
+	}
+	if next.app.ScrollOffset != 10 {
+		t.Fatalf("channel timeline offset = %d, want 10", next.app.ScrollOffset)
+	}
+}
+
+func TestEnhancedComposeShortcutsInsertNewlinesAndToggleImportance(t *testing.T) {
+	app := NewApp()
+	app.InputMode = true
+	model := NewModel(app, "client-id", "user-id")
+	model.textarea.SetValue("first line")
+
+	next, _ := model.updateInternal(testCSISequence("\x1b[13;2u"))
+	if !next.app.InputMode || next.textarea.Value() != "first line\n" {
+		t.Fatalf("Shift+Enter compose state = input:%v value:%q", next.app.InputMode, next.textarea.Value())
+	}
+
+	next, _ = next.updateInternal(testCSISequence("\x1b[47;9u"))
+	if !next.app.ComposeImportant {
+		t.Fatal("Cmd+/ did not enable Important message mode")
+	}
+
+	next, _ = next.updateInternal(testCSISequence("\x1b[47;9u"))
+	if next.app.ComposeImportant {
+		t.Fatal("second Cmd+/ did not toggle Important message mode back off")
+	}
+
+	next, _ = next.updateInternal(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	if next.textarea.Value() != "first line\n\n" {
+		t.Fatalf("Alt+Enter inserted an unexpected number of newlines: %q", next.textarea.Value())
+	}
+
+	next, _ = next.updateInternal(testCSISequence("\x1b[27u"))
+	if next.app.InputMode {
+		t.Fatal("enhanced Escape key did not cancel compose mode")
+	}
+}
+
+func TestKittyKeyEventConvertsLegacyControlKeys(t *testing.T) {
+	event, ok := parseKittyKeyEvent(testCSISequence("\x1b[99;5u"))
+	if !ok {
+		t.Fatal("could not parse Kitty Ctrl+C event")
+	}
+	key, ok := event.bubbleTeaKeyMsg()
+	if !ok || key.Type != tea.KeyCtrlC || key.String() != "ctrl+c" {
+		t.Fatalf("converted key = %#v, ok=%v", key, ok)
+	}
+}
+
+func TestImportantMessagePayloadUsesGraphHighImportance(t *testing.T) {
+	body := map[string]any{"contentType": "html", "content": "Please review"}
+	important := buildChatMessagePayload(body, nil, nil, nil, true)
+	if important["importance"] != "high" {
+		t.Fatalf("important payload = %#v", important)
+	}
+	normal := buildChatMessagePayload(body, nil, nil, nil, false)
+	if _, exists := normal["importance"]; exists {
+		t.Fatalf("normal payload unexpectedly contains importance: %#v", normal)
+	}
+}
+
+func TestFriendlyPreviewErrorDoesNotExposeGraphDetails(t *testing.T) {
+	err := fmt.Errorf("GET /shares/u!sensitive/driveItem: HTTP 403: accessDenied")
+	if got := friendlyPreviewError(err); got != "file permission required — re-authenticate" {
+		t.Fatalf("friendly preview error = %q", got)
+	}
+}
+
 func TestFavouriteChannelsSortFirstAndRenderStar(t *testing.T) {
 	app := NewApp()
 	app.Features.TeamsChannels = true
@@ -289,6 +418,64 @@ func TestPersistentKittyImageTransmitsOnceThenPlaces(t *testing.T) {
 	second := model.persistentKittySequence(path, 4, 5, 20, 6, 2)
 	if strings.Contains(second, "a=t") || !strings.Contains(second, "a=p") {
 		t.Fatalf("second sequence must only place: %q", second)
+	}
+}
+
+func TestMessagePopupPreviewDirectlyDisplaysOnEveryRedraw(t *testing.T) {
+	withTempConfigHome(t)
+	name := "inline-image-1.png"
+	contentType := "image/png"
+	contentURL := "https://graph.microsoft.com/v1.0/chats/chat-id/messages/message-id/hostedContents/content-id/$value"
+	chatName := "Design"
+	att := MessageAttachment{
+		ID:          "content-id",
+		Name:        &name,
+		ContentType: &contentType,
+		ContentURL:  &contentURL,
+	}
+	cachePath, err := getAttachmentCachePath(att)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 16, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 16; x++ {
+			img.Set(x, y, color.RGBA{R: 30, G: 190, B: 120, A: 255})
+		}
+	}
+	if err := png.Encode(file, img); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.SelectedIndex = 0
+	app.Features.FilePreviewInTerminal = true
+	app.Chats = []Chat{{ID: "chat-id", CachedDisplayName: &chatName}}
+	app.Messages = []Message{{ID: "message-id", Attachments: []MessageAttachment{att}}}
+	app.MessagePopupMode = true
+	app.AttachmentCursorMode = true
+	app.MessageSelectedIndex = 0
+	app.AttachmentSelectedIndex = 0
+	model := NewModel(app, "client-id", "user-id")
+	model.width = 120
+	model.height = 40
+
+	for redraw := 1; redraw <= 2; redraw++ {
+		view := model.View()
+		if !strings.Contains(view, "\x1b_Ga=T,f=100,") || !strings.Contains(view, "p=900") {
+			t.Fatalf("redraw %d did not directly transmit and display popup image", redraw)
+		}
+		if strings.Contains(view, "\x1b_Ga=p,") {
+			t.Fatalf("redraw %d used an indirect popup placement", redraw)
+		}
 	}
 }
 

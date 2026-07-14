@@ -2,6 +2,25 @@
 
 All notable changes to `ms-teams-tui` are documented here. This project uses semantic versioning.
 
+## 0.5.0 - 2026-07-14
+
+### Added
+
+- Important message composition for chats, channel posts, and replies. Press `Cmd+/` in Kitty-keyboard-compatible macOS terminals, or `Alt+/` as a fallback, to send with Microsoft Graph `importance: high`.
+- Enhanced Kitty keyboard input so modified keys such as `Shift+Enter` and macOS Command shortcuts remain distinguishable inside cmux and Ghostty.
+
+### Changed
+
+- The composer now grows with multiline text, shows a concise shortcut bar, and visibly marks Important-message mode before sending.
+- File preview authentication now requests read-only `Files.Read.All` so Teams attachments owned by other participants can be downloaded when the signed-in user already has access. Existing tokens missing enabled-feature scopes trigger a fresh device-code sign-in.
+
+### Fixed
+
+- Enabled terminal mouse reporting and routed vertical wheel events exclusively to the active message timeline, preventing mouse scrolling over the sidebar from changing the selected chat or channel.
+- Rendered enlarged `v` image previews with a direct Kitty transmit-and-display sequence so Ghostty-backed terminals such as cmux do not leave the preview pane blank.
+- Replaced permanent image-preview loading labels with explicit permission, missing-file, timeout, or retry states after a download failure.
+- Made `Shift+Enter` insert a newline instead of sending the message in terminals that support the Kitty keyboard protocol.
+
 ## 0.4.0 - 2026-07-10
 
 ### Added

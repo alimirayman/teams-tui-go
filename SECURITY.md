@@ -23,6 +23,8 @@ Normal background network traffic is limited to:
 
 Attachment transfers reject plain HTTP, userinfo URLs, nonstandard ports, loopback/private arbitrary hosts, and lookalike domains. Redirects are revalidated before following them. A Graph bearer token is attached only when the parsed hostname is exactly `graph.microsoft.com`.
 
+When file preview is enabled, the app requests delegated `Files.Read.All` so it can read Teams attachments owned by other participants. This is read-only and cannot exceed the files the signed-in user can already access. Upload remains separately gated by `Files.ReadWrite`.
+
 ## Local Data
 
 - Config and cache directories use mode `0700`.

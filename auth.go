@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,44 @@ import (
 	"sync"
 	"time"
 )
+
+func accessTokenIncludesScopes(accessToken, requestedScopes string) (bool, bool) {
+	parts := strings.Split(accessToken, ".")
+	if len(parts) != 3 {
+		return false, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false, false
+	}
+	var claims struct {
+		Scopes string `json:"scp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Scopes == "" {
+		return false, false
+	}
+
+	granted := make(map[string]bool)
+	for _, scope := range strings.Fields(claims.Scopes) {
+		granted[scope] = true
+	}
+	for _, scope := range strings.Fields(requestedScopes) {
+		if scope == "offline_access" {
+			continue
+		}
+		if !granted[scope] {
+			return false, true
+		}
+	}
+	return true, true
+}
+
+func validateEnabledFeatureScopes(accessToken string) error {
+	if includes, known := accessTokenIncludesScopes(accessToken, BuildScopes()); known && !includes {
+		return fmt.Errorf("token is missing permissions required by enabled features; sign in again")
+	}
+	return nil
+}
 
 // DeviceCodeResponse is the response from the device code endpoint.
 type DeviceCodeResponse struct {
@@ -245,12 +284,18 @@ func GetValidTokenSilent(clientID string) (string, error) {
 	token, err := loadToken()
 	if err != nil {
 		if accessToken, ok := validSessionAccessToken(); ok {
+			if scopeErr := validateEnabledFeatureScopes(accessToken); scopeErr != nil {
+				return "", scopeErr
+			}
 			return accessToken, nil
 		}
 		return "", fmt.Errorf("could not load token: %w", err)
 	}
 	if token == nil {
 		if accessToken, ok := validSessionAccessToken(); ok {
+			if scopeErr := validateEnabledFeatureScopes(accessToken); scopeErr != nil {
+				return "", scopeErr
+			}
 			return accessToken, nil
 		}
 		return "", fmt.Errorf("no cached token found")
@@ -259,6 +304,9 @@ func GetValidTokenSilent(clientID string) (string, error) {
 	// Check if token is still valid (with a 5-minute buffer).
 	const bufferSeconds = 5 * 60
 	if time.Now().Unix()+bufferSeconds < token.ExpiresAt {
+		if scopeErr := validateEnabledFeatureScopes(token.AccessToken); scopeErr != nil {
+			return "", scopeErr
+		}
 		rememberSessionToken(token)
 		return token.AccessToken, nil
 	}
@@ -270,6 +318,9 @@ func GetValidTokenSilent(clientID string) (string, error) {
 	newToken, err := RefreshAccessToken(clientID, *token.RefreshToken, BuildScopes())
 	if err != nil {
 		return "", fmt.Errorf("token refresh failed: %w", err)
+	}
+	if scopeErr := validateEnabledFeatureScopes(newToken.AccessToken); scopeErr != nil {
+		return "", scopeErr
 	}
 	rememberSessionToken(newToken)
 	return newToken.AccessToken, nil
@@ -296,6 +347,9 @@ func GetAccessToken(clientID string) (string, error) {
 	token, err := PollForToken(clientID, dc.DeviceCode, dc.Interval)
 	if err != nil {
 		return "", fmt.Errorf("authentication failed: %w", err)
+	}
+	if includes, known := accessTokenIncludesScopes(token.AccessToken, BuildScopes()); known && !includes {
+		return "", fmt.Errorf("authentication succeeded but required permissions were not granted")
 	}
 
 	// Mask the token in output.

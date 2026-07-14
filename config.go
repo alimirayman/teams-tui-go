@@ -213,7 +213,7 @@ type Config struct {
 	// Optional feature flags — each defaults to false (disabled).
 	// When enabled, the corresponding Graph API permission must be granted
 	// in the Azure app registration and the cached token refreshed.
-	FilePreviewEnabled     *bool   `json:"file_preview_enabled,omitempty"`     // requires Files.Read
+	FilePreviewEnabled     *bool   `json:"file_preview_enabled,omitempty"`     // requires Files.Read.All
 	FilePreviewInTerminal  *bool   `json:"file_preview_in_terminal,omitempty"` // show image in terminal if file_preview_enabled is true
 	FileUploadEnabled      *bool   `json:"file_upload_enabled,omitempty"`      // requires Files.ReadWrite
 	PresenceEnabled        *bool   `json:"presence_enabled,omitempty"`         // requires Presence.Read.All
@@ -728,10 +728,14 @@ func ResolveFeatureSqlite() bool {
 // Basic scopes are always included; additional scopes are appended for enabled features.
 func BuildScopes() string {
 	base := "User.Read Chat.ReadWrite offline_access"
+	if ResolveFeatureFilePreview() {
+		// Teams reference attachments often live in another participant's
+		// OneDrive. Files.Read.All is read-only and covers every file the signed-in
+		// user can already access; Files.Read only covers that user's own files.
+		base += " Files.Read.All"
+	}
 	if ResolveFeatureFileUpload() {
 		base += " Files.ReadWrite"
-	} else if ResolveFeatureFilePreview() {
-		base += " Files.Read"
 	}
 	if ResolveFeaturePresence() {
 		base += " Presence.Read.All"

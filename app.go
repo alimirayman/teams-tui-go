@@ -68,7 +68,7 @@ func (n *NotificationMode) UnmarshalJSON(data []byte) error {
 // FeatureFlags holds resolved optional feature flags for the running session.
 // Populated once at startup from config to avoid repeated file reads.
 type FeatureFlags struct {
-	FilePreview           bool // requires Files.Read
+	FilePreview           bool // requires Files.Read.All
 	FilePreviewInTerminal bool // show image in terminal if FilePreview is enabled
 	FileUpload            bool // requires Files.ReadWrite
 	Presence              bool // requires Presence.Read.All
@@ -92,6 +92,7 @@ type App struct {
 	SearchLoadingMessages      bool
 	InputMode                  bool
 	InputBuffer                string
+	ComposeImportant           bool
 	ScrollOffset               int
 	MaxScroll                  int
 	ChatScrollOffset           int

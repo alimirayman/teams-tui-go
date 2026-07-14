@@ -137,6 +137,8 @@ Do not silence a security scanner globally. A `#nosec` annotation is allowed onl
 - Network and disk operations must not block `Update` or `View`.
 - Read feature flags from `app.Features` inside the event loop.
 - The API returns messages newest-first; the timeline renders in reverse.
+- Mouse-wheel events always scroll the active message timeline and must never change chat or channel selection.
+- Modified compose shortcuts rely on the Kitty keyboard disambiguation flag. Push it from `Model.Init` after Bubble Tea enters the alternate screen; the terminal keeps a separate alt-screen keyboard stack and discards it on exit. Keep ordinary text input in legacy form.
 - Unicode width must use existing cell/grapheme helpers. Do not use byte length for layout.
 
 ### Files and Images
@@ -146,6 +148,7 @@ Do not silence a security scanner globally. A `#nosec` annotation is allowed onl
 - The file picker is type-first: printable keys update its fuzzy filter and arrow keys navigate results.
 - Dotfiles and dot-directories are intentionally visible in the picker.
 - Image preview cache paths are content-addressed under the app cache.
+- Reference-attachment preview uses delegated `Files.Read.All` because the file can be owned by another Teams participant; upload remains separately gated by `Files.ReadWrite`.
 - Inline image rendering uses Kitty Graphics Protocol sequences.
 - Keep Kitty transmission and placement compatible with cmux's Ghostty renderer: quiet 4096-byte chunks, image IDs in `1..2_000_000_000`, and `ESC 7/8` cursor save/restore around placements.
 - Attachment quick preview is explicit and user-triggered; macOS uses `/usr/bin/qlmanage -p` against an app-owned cache file.

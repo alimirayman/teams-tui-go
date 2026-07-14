@@ -70,6 +70,7 @@ type Message struct {
 	ID                      string              `json:"id"`
 	CreatedDateTime         string              `json:"createdDateTime"`
 	MessageType             string              `json:"messageType,omitempty"`
+	Importance              string              `json:"importance,omitempty"`
 	Subject                 string              `json:"subject,omitempty"`
 	From                    *MessageFrom        `json:"from,omitempty"`
 	Body                    *MessageBody        `json:"body,omitempty"`
@@ -1164,88 +1165,72 @@ func formatMessageBodyWithImagesAndFiles(content string, members []ChatMember, i
 	return bodyPayload, mentions, hostedContents, attachmentsPayload
 }
 
+func buildChatMessagePayload(body map[string]any, mentions, hostedContents, attachments []map[string]any, important bool) map[string]any {
+	payload := map[string]any{"body": body}
+	if len(mentions) > 0 {
+		payload["mentions"] = mentions
+	}
+	if len(hostedContents) > 0 {
+		payload["hostedContents"] = hostedContents
+	}
+	if len(attachments) > 0 {
+		payload["attachments"] = attachments
+	}
+	if important {
+		payload["importance"] = "high"
+	}
+	return payload
+}
+
 // SendMessage posts a message to the given chat.
-func SendMessage(accessToken, chatID, content string, members []ChatMember, images []PastedImage, files []PendingFile) error {
+func SendMessage(accessToken, chatID, content string, members []ChatMember, images []PastedImage, files []PendingFile, important bool) error {
 	refAttachments, err := uploadChatFiles(accessToken, files, members)
 	if err != nil {
 		return err
 	}
 
 	body, mentions, hostedContents, attachments := formatMessageBodyWithImagesAndFiles(content, members, images, refAttachments)
-	payload := map[string]any{
-		"body": body,
-	}
-	if len(mentions) > 0 {
-		payload["mentions"] = mentions
-	}
-	if len(hostedContents) > 0 {
-		payload["hostedContents"] = hostedContents
-	}
-	if len(attachments) > 0 {
-		payload["attachments"] = attachments
-	}
+	payload := buildChatMessagePayload(body, mentions, hostedContents, attachments, important)
 	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
 }
 
 // SendChannelMessage posts a new message to a Teams channel.
 // Requires ChannelMessage.Read.All delegated permission.
-func SendChannelMessage(accessToken, teamID, channelID, content string, members []ChatMember, images []PastedImage, files []PendingFile) error {
+func SendChannelMessage(accessToken, teamID, channelID, content string, members []ChatMember, images []PastedImage, files []PendingFile, important bool) error {
 	refAttachments, err := uploadChannelFiles(accessToken, teamID, channelID, files)
 	if err != nil {
 		return err
 	}
 
 	body, mentions, hostedContents, attachments := formatMessageBodyWithImagesAndFiles(content, members, images, refAttachments)
-	payload := map[string]any{
-		"body": body,
-	}
-	if len(mentions) > 0 {
-		payload["mentions"] = mentions
-	}
-	if len(hostedContents) > 0 {
-		payload["hostedContents"] = hostedContents
-	}
-	if len(attachments) > 0 {
-		payload["attachments"] = attachments
-	}
+	payload := buildChatMessagePayload(body, mentions, hostedContents, attachments, important)
 	return graphPost(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages", teamID, channelID), payload)
 }
 
 // SendChannelReply posts a reply into an existing Teams channel thread.
 // rootMsgID is the ID of the root (top-level) message in the thread.
 // Requires ChannelMessage.Send delegated permission.
-func SendChannelReply(accessToken, teamID, channelID, rootMsgID, content string, members []ChatMember, images []PastedImage, files []PendingFile) error {
+func SendChannelReply(accessToken, teamID, channelID, rootMsgID, content string, members []ChatMember, images []PastedImage, files []PendingFile, important bool) error {
 	refAttachments, err := uploadChannelFiles(accessToken, teamID, channelID, files)
 	if err != nil {
 		return err
 	}
 
 	body, mentions, hostedContents, attachments := formatMessageBodyWithImagesAndFiles(content, members, images, refAttachments)
-	payload := map[string]any{
-		"body": body,
-	}
-	if len(mentions) > 0 {
-		payload["mentions"] = mentions
-	}
-	if len(hostedContents) > 0 {
-		payload["hostedContents"] = hostedContents
-	}
-	if len(attachments) > 0 {
-		payload["attachments"] = attachments
-	}
+	payload := buildChatMessagePayload(body, mentions, hostedContents, attachments, important)
 	return graphPost(accessToken, fmt.Sprintf("/teams/%s/channels/%s/messages/%s/replies", teamID, channelID, rootMsgID), payload)
 }
 
 // SendMessageWithReference posts a reply-to-message using a Teams messageReference
 // attachment, making it appear as a proper quoted reply in the Teams client.
-func SendMessageWithReference(accessToken, chatID string, ref *Message, content string, members []ChatMember, images []PastedImage, files []PendingFile) error {
+func SendMessageWithReference(accessToken, chatID string, ref *Message, content string, members []ChatMember, images []PastedImage, files []PendingFile, important bool) error {
 	refAttachments, err := uploadChatFiles(accessToken, files, members)
 	if err != nil {
 		return err
 	}
 
 	if ref == nil {
-		return SendMessage(accessToken, chatID, content, members, images, files)
+		return SendMessage(accessToken, chatID, content, members, images, files, important)
 	}
 
 	// Build the sender JSON for the attachment content field.
@@ -1312,6 +1297,9 @@ func SendMessageWithReference(accessToken, chatID string, ref *Message, content 
 	}
 	if len(hostedContents) > 0 {
 		payload["hostedContents"] = hostedContents
+	}
+	if important {
+		payload["importance"] = "high"
 	}
 	return graphPost(accessToken, "/chats/"+chatID+"/messages", payload)
 }
@@ -2576,7 +2564,7 @@ func GetUserProfile(accessToken, userID string) (*UserProfile, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Optional Feature: File Download (requires Files.Read)
+// Optional Feature: File Download (requires Files.Read.All)
 // ---------------------------------------------------------------------------
 
 // isSharePointURL returns true when the URL is a SharePoint/OneDrive file URL
@@ -2590,7 +2578,7 @@ func isSharePointURL(fileURL string) bool {
 
 // resolveSharePointDownloadURL takes a SharePoint/OneDrive contentUrl and
 // returns a direct download URL by going through the Graph Shares API.
-// Requires Files.Read (or Files.Read.All) permission.
+// Requires Files.Read.All permission for Teams attachments owned by other users.
 func resolveSharePointDownloadURL(accessToken, shareURL string) (string, error) {
 	// Encode the sharing URL as a base64 token required by the Shares API.
 	// Format: "u!" + base64(url), then replace +→-, /→_, remove trailing =

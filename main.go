@@ -180,49 +180,49 @@ func findSelfChatCmd(clientID, currentUserID string, chats []Chat, open bool) te
 }
 
 // sendMessageCmd sends a message to a chat in the background.
-func sendMessageCmd(clientID, chatID, content string, members []ChatMember, images []PastedImage, files []PendingFile) tea.Cmd {
+func sendMessageCmd(clientID, chatID, content string, members []ChatMember, images []PastedImage, files []PendingFile, important bool) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
 			return MsgSendDone{Err: err}
 		}
-		err = SendMessage(token, chatID, content, members, images, files)
+		err = SendMessage(token, chatID, content, members, images, files, important)
 		return MsgSendDone{Err: err}
 	}
 }
 
 // sendChannelMessageCmd sends a message to a Teams channel in the background.
-func sendChannelMessageCmd(clientID, teamID, channelID, content string, members []ChatMember, images []PastedImage, files []PendingFile) tea.Cmd {
+func sendChannelMessageCmd(clientID, teamID, channelID, content string, members []ChatMember, images []PastedImage, files []PendingFile, important bool) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
 			return MsgSendDone{Err: err}
 		}
-		err = SendChannelMessage(token, teamID, channelID, content, members, images, files)
+		err = SendChannelMessage(token, teamID, channelID, content, members, images, files, important)
 		return MsgSendDone{Err: err}
 	}
 }
 
 // sendChannelReplyCmd posts a reply into an existing Teams channel thread.
-func sendChannelReplyCmd(clientID, teamID, channelID, rootMsgID, content string, members []ChatMember, images []PastedImage, files []PendingFile) tea.Cmd {
+func sendChannelReplyCmd(clientID, teamID, channelID, rootMsgID, content string, members []ChatMember, images []PastedImage, files []PendingFile, important bool) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
 			return MsgSendDone{Err: err}
 		}
-		err = SendChannelReply(token, teamID, channelID, rootMsgID, content, members, images, files)
+		err = SendChannelReply(token, teamID, channelID, rootMsgID, content, members, images, files, important)
 		return MsgSendDone{Err: err}
 	}
 }
 
 // sendMessageWithRefCmd sends a reply message with a Teams messageReference attachment.
-func sendMessageWithRefCmd(clientID, chatID, content string, ref *Message, members []ChatMember, images []PastedImage, files []PendingFile) tea.Cmd {
+func sendMessageWithRefCmd(clientID, chatID, content string, ref *Message, members []ChatMember, images []PastedImage, files []PendingFile, important bool) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
 		if err != nil {
 			return MsgSendDone{Err: err}
 		}
-		err = SendMessageWithReference(token, chatID, ref, content, members, images, files)
+		err = SendMessageWithReference(token, chatID, ref, content, members, images, files, important)
 		return MsgSendDone{Err: err}
 	}
 }
@@ -382,7 +382,7 @@ func loadUserProfileCmd(clientID, userID string) tea.Cmd {
 }
 
 // downloadFileCmd downloads a file attachment to destPath.
-// Requires Files.Read scope; returns MsgFileDownloaded.
+// Requires Files.Read.All scope; returns MsgFileDownloaded.
 func downloadFileCmd(clientID, fileURL, destPath string) tea.Cmd {
 	return func() tea.Msg {
 		token, err := GetValidTokenSilent(clientID)
@@ -903,6 +903,7 @@ func main() {
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 		tea.WithReportFocus(),
 		tea.WithOutput(newSynchronizedWriter(os.Stdout)),
 		tea.WithFPS(30),

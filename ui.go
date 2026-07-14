@@ -177,6 +177,9 @@ type MsgPreviewFinished struct {
 	Err error
 }
 
+type msgComposeNewline struct{}
+type msgToggleImportant struct{}
+
 type InlineImagePlacement struct {
 	CachePath string
 	Col       int
@@ -339,7 +342,7 @@ type Model struct {
 	lastWrittenMessages  int
 	lastWrittenReactions int
 	previewDownloads     map[string]bool
-	previewFailures      map[string]bool
+	previewFailures      map[string]string
 	messageRenderCache   map[string]messageRenderCacheEntry
 	kittyPreparedCache   map[string]kittyPreparedImage
 	kittyTransmitted     map[string]bool
@@ -419,7 +422,7 @@ func NewModel(app *App, clientID, userID string) Model {
 		lastWrittenMessages:  -1,
 		lastWrittenReactions: -1,
 		previewDownloads:     make(map[string]bool),
-		previewFailures:      make(map[string]bool),
+		previewFailures:      make(map[string]string),
 		messageRenderCache:   make(map[string]messageRenderCacheEntry),
 		kittyPreparedCache:   make(map[string]kittyPreparedImage),
 		kittyTransmitted:     make(map[string]bool),
@@ -438,6 +441,10 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		tickCmd(),
 		findSelfChatCmd(m.clientID, m.userID, m.app.Chats, false),
+		func() tea.Msg {
+			_ = writeTerminalSequence(os.Stdout, enableEnhancedKeyboard)
+			return nil
+		},
 	}
 	if m.app.Features.TeamsChannels {
 		m.app.TeamsDataLoading = true
@@ -456,7 +463,41 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 	wasSearchMode := m.app.SearchMode
 	wasUserSearchMode := m.app.UserSearchMode
 
+	if key, ok := parseKittyKeyEvent(msg); ok {
+		handled := false
+		if m.app.InputMode {
+			switch {
+			case key.isShiftEnter():
+				msg = msgComposeNewline{}
+				handled = true
+			case key.isCommandImportant():
+				msg = msgToggleImportant{}
+				handled = true
+			}
+		}
+		if !handled {
+			if legacyKey, converted := key.bubbleTeaKeyMsg(); converted {
+				msg = legacyKey
+			}
+		}
+	}
+
 	switch msg := msg.(type) {
+	case msgComposeNewline:
+		m.textarea.InsertString("\n")
+		m.app.InputBuffer = m.textarea.Value()
+
+	case msgToggleImportant:
+		if m.app.EditingMessageID != nil {
+			m.app.SetStatus("Importance can only be set on a new message", 3*time.Second)
+			break
+		}
+		m.app.ComposeImportant = !m.app.ComposeImportant
+		if m.app.ComposeImportant {
+			m.app.SetStatus("Important message enabled", 2*time.Second)
+		} else {
+			m.app.SetStatus("Important message disabled", 2*time.Second)
+		}
 
 	// ── Window resize ────────────────────────────────────────────────────
 	case tea.WindowSizeMsg:
@@ -1411,11 +1452,14 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 	case MsgPreviewDownloaded:
 		delete(m.previewDownloads, msg.DestPath)
 		if msg.Err != nil {
-			m.previewFailures[msg.DestPath] = true
+			m.previewFailures[msg.DestPath] = friendlyPreviewError(msg.Err)
 			if !msg.Silent {
-				m.app.SetStatus("Preview error: "+msg.Err.Error(), 3*time.Second)
+				m.app.SetStatus("Preview unavailable: "+friendlyPreviewError(msg.Err), 5*time.Second)
 			}
-		} else if msg.QuickLook {
+		} else {
+			delete(m.previewFailures, msg.DestPath)
+		}
+		if msg.Err == nil && msg.QuickLook {
 			if err := quickPreviewFile(msg.DestPath); err != nil {
 				m.app.SetStatus("Quick preview failed: "+err.Error(), 5*time.Second)
 			} else {
@@ -1613,6 +1657,16 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 		m.app.SkipTextareaUpdate = true
 		return m, nil
 
+	// Mouse wheel input always belongs to the active message timeline. Handling
+	// it before keyboard routing prevents terminals from treating wheel events
+	// over the sidebar as up/down conversation navigation.
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m, cmd = m.handleMouse(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
 	// ── Keyboard input ────────────────────────────────────────────────────
 	case tea.KeyMsg:
 		m = m.markRead()
@@ -1748,6 +1802,34 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.handleSearchPopupNavigationKey(msg)
 	}
 	return m.handleNormalModeKey(msg)
+}
+
+func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
+	event := tea.MouseEvent(msg)
+	if !event.IsWheel() || m.app.SelectedIndex < 0 && m.channelSelectedIndex < 0 {
+		return m, nil
+	}
+	if m.app.FilePickerPopupMode || m.app.HelpPopupMode || m.app.PresencePopupMode ||
+		m.app.UserProfilePopupMode || m.app.MessagePopupMode || m.app.UserSearchPopupMode ||
+		m.app.SearchPopupMode || m.app.UrlSelectionMode || m.app.ReactionMode || m.app.DeleteConfirmMode {
+		return m, nil
+	}
+
+	m = m.markRead()
+	const wheelStep = 3
+	switch event.Button {
+	case tea.MouseButtonWheelUp:
+		m.app.SnapToBottom = false
+		if m.app.ScrollOffset == 0 && m.app.NextLink != "" && !m.app.LoadingMessages {
+			m.app.SetLoadingMessages(true)
+			return m, loadMoreMessagesCmd(m.clientID, m.app.NextLink, m.activeConversationID(), false)
+		}
+		m.app.ScrollOffset = max(m.app.ScrollOffset-wheelStep, 0)
+	case tea.MouseButtonWheelDown:
+		m.app.ScrollOffset = min(m.app.ScrollOffset+wheelStep, m.app.MaxScroll)
+		m.app.SnapToBottom = m.app.ScrollOffset >= m.app.MaxScroll
+	}
+	return m, nil
 }
 
 func (m Model) messageIndexNearViewport() int {
@@ -2304,6 +2386,7 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.pendingFilePastes = 0
 		m.app.InputMode = false
 		m.app.InputBuffer = ""
+		m.app.ComposeImportant = false
 		m.app.EditingMessageID = nil
 		m.app.ReplyToMessage = nil
 		m.app.ChannelReplyToID = ""
@@ -2350,6 +2433,21 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 		}
 
+	case "alt+/":
+		if m.app.EditingMessageID != nil {
+			m.app.SetStatus("Importance can only be set on a new message", 3*time.Second)
+			m.app.SkipTextareaUpdate = true
+			return m, nil
+		}
+		m.app.ComposeImportant = !m.app.ComposeImportant
+		if m.app.ComposeImportant {
+			m.app.SetStatus("Important message enabled", 2*time.Second)
+		} else {
+			m.app.SetStatus("Important message disabled", 2*time.Second)
+		}
+		m.app.SkipTextareaUpdate = true
+		return m, nil
+
 	case "enter":
 		if m.pendingFilePastes > 0 {
 			m.app.SetStatus("File is still attaching...", 2*time.Second)
@@ -2363,6 +2461,8 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.app.InputMode = false
 		m.composeGeneration++
 		m.app.InputBuffer = ""
+		important := m.app.ComposeImportant
+		m.app.ComposeImportant = false
 		m.textarea.Reset()
 
 		images := m.app.ComposedImages
@@ -2374,8 +2474,15 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.app.SetStatus("Updating message...", 0)
 		} else {
 			sendingMsg := "Sending message..."
+			if important {
+				sendingMsg = "Sending Important message..."
+			}
 			if len(images) > 0 || len(files) > 0 {
-				sendingMsg = "Uploading files and sending message..."
+				if important {
+					sendingMsg = "Uploading files and sending Important message..."
+				} else {
+					sendingMsg = "Uploading files and sending message..."
+				}
 			}
 			m.app.SetStatus(sendingMsg, 0)
 		}
@@ -2394,9 +2501,9 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			if m.app.ChannelReplyToID != "" {
 				rootID := m.app.ChannelReplyToID
 				m.app.ChannelReplyToID = ""
-				return m, sendChannelReplyCmd(m.clientID, ch.teamID, ch.channelID, rootID, content, members, images, files)
+				return m, sendChannelReplyCmd(m.clientID, ch.teamID, ch.channelID, rootID, content, members, images, files, important)
 			}
-			return m, sendChannelMessageCmd(m.clientID, ch.teamID, ch.channelID, content, members, images, files)
+			return m, sendChannelMessageCmd(m.clientID, ch.teamID, ch.channelID, content, members, images, files, important)
 		}
 
 		chat := m.app.GetSelectedChat()
@@ -2412,12 +2519,14 @@ func (m Model) handleInputModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if m.app.ReplyToMessage != nil {
 			ref := m.app.ReplyToMessage
 			m.app.ReplyToMessage = nil
-			return m, sendMessageWithRefCmd(m.clientID, chat.ID, content, ref, members, images, files)
+			return m, sendMessageWithRefCmd(m.clientID, chat.ID, content, ref, members, images, files, important)
 		}
-		return m, sendMessageCmd(m.clientID, chat.ID, content, members, images, files)
+		return m, sendMessageCmd(m.clientID, chat.ID, content, members, images, files, important)
 
 	case "alt+enter", "shift+enter", "ctrl+enter":
 		m.textarea.InsertString("\n")
+		m.app.InputBuffer = m.textarea.Value()
+		m.app.SkipTextareaUpdate = true
 		return m, nil
 	}
 
@@ -3071,19 +3180,9 @@ func (m Model) writeAppState() Model {
 // ---------------------------------------------------------------------------
 
 func (m Model) persistentKittySequence(path string, x, y, width, height int, placementID uint32) string {
-	key := fmt.Sprintf("%s:%d:%d", path, width, height)
-	prepared, ok := m.kittyPreparedCache[key]
+	prepared, key, ok := m.cachedKittyImage(path, width, height)
 	if !ok {
-		var err error
-		prepared, err = prepareKittyImage(path, width, height)
-		if err != nil {
-			return ""
-		}
-		if len(m.kittyPreparedCache) > 64 {
-			clear(m.kittyPreparedCache)
-			clear(m.kittyTransmitted)
-		}
-		m.kittyPreparedCache[key] = prepared
+		return ""
 	}
 	imageID := kittyImageID(key)
 	var sequence strings.Builder
@@ -3093,6 +3192,32 @@ func (m Model) persistentKittySequence(path string, x, y, width, height int, pla
 	}
 	sequence.WriteString(kittyPlaceSequence(prepared, imageID, placementID, x, y))
 	return sequence.String()
+}
+
+func (m Model) directKittySequence(path string, x, y, width, height int, placementID uint32) string {
+	prepared, key, ok := m.cachedKittyImage(path, width, height)
+	if !ok {
+		return ""
+	}
+	return kittyDirectDisplaySequence(prepared, kittyImageID(key), placementID, x, y)
+}
+
+func (m Model) cachedKittyImage(path string, width, height int) (kittyPreparedImage, string, bool) {
+	key := fmt.Sprintf("%s:%d:%d", path, width, height)
+	prepared, ok := m.kittyPreparedCache[key]
+	if !ok {
+		var err error
+		prepared, err = prepareKittyImage(path, width, height)
+		if err != nil {
+			return kittyPreparedImage{}, key, false
+		}
+		if len(m.kittyPreparedCache) > 64 {
+			clear(m.kittyPreparedCache)
+			clear(m.kittyTransmitted)
+		}
+		m.kittyPreparedCache[key] = prepared
+	}
+	return prepared, key, true
 }
 
 func kittyImageID(key string) uint32 {
@@ -3262,8 +3387,9 @@ func (m Model) View() string {
 								imgW := previewW - 2
 								imgH := (innerH - 1) - 2 // targetH - 2
 
-								// Clear all, then draw image
-								kittySeq += m.persistentKittySequence(cp, imgX, imgY, imgW, imgH, 900)
+								// Popup previews use a direct transmit-and-display command. This
+								// avoids blank placements in Ghostty-backed terminals such as cmux.
+								kittySeq += m.directKittySequence(cp, imgX, imgY, imgW, imgH, 900)
 							}
 						}
 					}
@@ -3359,11 +3485,13 @@ func (m Model) renderRightPanel(w, h int) string {
 		)
 	}
 
-	// Input mode: split height between messages and textarea.
-	// When replying, add 2 extra lines for the quote preview.
-	inputH := 5
+	// Grow the composer with multiline text while keeping most of the screen for
+	// conversation context.
+	maxTextRows := max(3, min(10, h/3))
+	textRows := max(3, min(m.textarea.LineCount(), maxTextRows))
+	inputH := textRows + 2 // divider + key-hint line
 	if m.app.ReplyToMessage != nil {
-		inputH = 7
+		inputH += 2 // quoted-message line + separator
 	}
 
 	mentionH := 0
@@ -3438,6 +3566,9 @@ func (m Model) renderRightPanel(w, h int) string {
 		}
 		titleDetail = "replying to " + sender
 	}
+	if m.app.ComposeImportant {
+		titleDetail += " · ! IMPORTANT"
+	}
 	title := m.conversationHeader(w, titleDetail)
 	msgBox := fitBlock(
 		fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(title), w)+"\n"+msgContent,
@@ -3446,16 +3577,23 @@ func (m Model) renderRightPanel(w, h int) string {
 	)
 
 	m.textarea.SetWidth(w)
-	m.textarea.SetHeight(inputH - 2)
+	m.textarea.SetHeight(textRows)
 
 	// Build input box contents — add quote preview when replying.
-	hintText := "Type your message (Enter: send, Alt+Enter: new line, ESC: cancel, @: mention, Cmd/Ctrl+V: paste"
+	hintText := "Enter send · Shift+Enter newline · Cmd+/ Important · @ mention · Cmd/Ctrl+V paste"
 	if m.app.Features.FileUpload {
-		hintText += ", Ctrl+f: attach file"
+		hintText += " · Ctrl+f attach"
 	}
-	hintText += ", Ctrl+g: open external editor)"
+	hintText += " · Ctrl+g editor · Esc cancel"
+	if m.app.ComposeImportant {
+		hintText = "[! IMPORTANT] " + hintText
+	}
 
-	hintLine := fitLine(lipgloss.NewStyle().Foreground(colDimGray).Render(hintText), w)
+	hintColor := colDimGray
+	if m.app.ComposeImportant {
+		hintColor = colYellow
+	}
+	hintLine := fitLine(lipgloss.NewStyle().Foreground(hintColor).Bold(m.app.ComposeImportant).Render(hintText), w)
 	inputParts := []string{hintLine}
 
 	if m.app.ReplyToMessage != nil {
@@ -3481,7 +3619,7 @@ func (m Model) renderRightPanel(w, h int) string {
 		inputParts = append(inputParts, fitLine(quoteLine, w))
 		// Separator between quote and textarea.
 		inputParts = append(inputParts, lipgloss.NewStyle().Foreground(colDimGray).Render(strings.Repeat("─", w)))
-		m.textarea.SetHeight(inputH - 4) // hint + quote + separator lines
+		m.textarea.SetHeight(textRows)
 	}
 
 	inputParts = append(inputParts, m.textarea.View())
@@ -4044,6 +4182,12 @@ func (m Model) renderMessages(w, h int) string {
 			if m.isOwn(msg) {
 				senderName = "Me"
 			}
+			switch strings.ToLower(msg.Importance) {
+			case "high":
+				senderName += " ! IMPORTANT"
+			case "urgent":
+				senderName += " !! URGENT"
+			}
 			if m.app.SearchActive && m.app.SearchQuery != "" {
 				senderName = highlightQuery(senderName, m.app.SearchQuery)
 			}
@@ -4157,6 +4301,7 @@ func (m Model) renderMessages(w, h int) string {
 
 			var prepared []InlineImagePlacement
 			missing := 0
+			failed := 0
 			for index, att := range imageAttachments {
 				resolvedAtt := m.resolvedAttachment(msg, att)
 				cachePath, err := getAttachmentCachePath(resolvedAtt)
@@ -4164,7 +4309,11 @@ func (m Model) renderMessages(w, h int) string {
 					continue
 				}
 				if _, err := os.Stat(cachePath); err != nil {
-					missing++
+					if m.previewFailures[cachePath] != "" {
+						failed++
+					} else {
+						missing++
+					}
 				}
 				col := baseCol
 				if sideBySide {
@@ -4177,7 +4326,13 @@ func (m Model) renderMessages(w, h int) string {
 					Height:    thumbH,
 				})
 			}
-			if missing > 0 {
+			if failed > 0 {
+				label := "image preview unavailable — press v, then Space to retry"
+				if failed > 1 {
+					label = fmt.Sprintf("%d image previews unavailable — press v, then Space to retry", failed)
+				}
+				lines = append(lines, strings.Repeat(" ", baseCol)+lipgloss.NewStyle().Foreground(colYellow).Render(label))
+			} else if missing > 0 {
 				label := "loading image preview"
 				if missing > 1 {
 					label = fmt.Sprintf("loading %d image previews", missing)
@@ -4328,7 +4483,7 @@ func (m Model) statusHint() string {
 	case m.app.MessagePopupMode:
 		return "Message: j/k next, J/K scroll, Tab attachments, q/Esc close"
 	case m.app.InputMode:
-		return "Compose: Enter send, Alt+Enter newline, Cmd/Ctrl+V paste, Ctrl+f file, Ctrl+g editor, Esc cancel"
+		return "Compose: Enter send, Shift+Enter newline, Cmd+/ Important, Cmd/Ctrl+V paste, Ctrl+f file, Esc cancel"
 	case m.app.UserSearchPopupMode:
 		return "Find chat: type, j/k move, Enter open, Esc close"
 	case m.app.SearchPopupMode:
@@ -6405,6 +6560,7 @@ func (m Model) renderMessagePopup(w, h int) string {
 
 	var showImagePreview bool
 	var previewDownloading bool
+	var previewFailure string
 
 	if m.app.Features.FilePreviewInTerminal && m.app.AttachmentCursorMode {
 		if m.app.MessageSelectedIndex >= 0 && m.app.MessageSelectedIndex < len(m.app.Messages) {
@@ -6417,7 +6573,8 @@ func (m Model) renderMessagePopup(w, h int) string {
 					resolvedAtt := m.resolvedAttachment(msgObj, att)
 					if cp, err := getAttachmentCachePath(resolvedAtt); err == nil {
 						if _, err := os.Stat(cp); err != nil {
-							previewDownloading = true
+							previewFailure = m.previewFailures[cp]
+							previewDownloading = previewFailure == ""
 						}
 					}
 				}
@@ -6611,6 +6768,9 @@ func (m Model) renderMessagePopup(w, h int) string {
 		borderColor := colDarkGray
 		if previewDownloading {
 			previewText = "\n⏳ Loading preview..."
+		} else if previewFailure != "" {
+			borderColor = colRed
+			previewText = "\nPreview unavailable\n" + previewFailure + "\n\nSpace: retry"
 		} else {
 			borderColor = colGreen
 			previewText = ""
@@ -6744,6 +6904,7 @@ func (m Model) getHelpContentLines() []string {
 			{"Tab", "Switch between Chats & Channels"},
 			{"m", "Enter message selection mode"},
 			{"z", "Expand/collapse the message near the viewport"},
+			{"Mouse wheel", "Scroll active messages without changing conversation"},
 			{"Ctrl+u / Ctrl+d", "Scroll messages by half a page"},
 			{"v", "Preview the newest image in loaded messages"},
 			{"i", "Compose new message"},
@@ -6797,7 +6958,9 @@ func (m Model) getHelpContentLines() []string {
 			{"ESC", "Close popup"},
 		}},
 		{"Composing Messages", [][2]string{
-			{"Type", "Write message (Alt+Enter for newline)"},
+			{"Type", "Write message (composer grows up to 10 lines)"},
+			{"Shift+Enter", "Insert newline (Alt+Enter fallback)"},
+			{"Cmd+/", "Toggle Important message (Alt+/ fallback)"},
 			{"@", "Open autocomplete mention popup"},
 			{"j / k / Tab", "Navigate suggestions (when mention popup is open)"},
 			{"Enter", "Select suggestion (when open) / Send message"},
@@ -7319,6 +7482,14 @@ func (m Model) checkAndTriggerPreviewDownload() tea.Cmd {
 	}
 
 	// Download in background
+	if m.previewDownloads == nil {
+		m.previewDownloads = make(map[string]bool)
+	}
+	if m.previewFailures == nil {
+		m.previewFailures = make(map[string]string)
+	}
+	delete(m.previewFailures, cachePath)
+	m.previewDownloads[cachePath] = true
 	return downloadPreviewCmd(m.clientID, fileURL, cachePath, false)
 }
 
@@ -7353,6 +7524,10 @@ func (m Model) quickPreviewSelectedAttachment() tea.Cmd {
 			return MsgPreviewDownloaded{DestPath: cachePath, QuickLook: true}
 		}
 	}
+	if m.previewFailures == nil {
+		m.previewFailures = make(map[string]string)
+	}
+	delete(m.previewFailures, cachePath)
 	m.app.SetStatus("Preparing preview: "+safeAttachmentName(att), 0)
 	return downloadQuickPreviewCmd(m.clientID, fileURL, cachePath)
 }
@@ -7396,7 +7571,7 @@ func (m *Model) queueInlineImagePreviews(limit int) tea.Cmd {
 		m.previewDownloads = make(map[string]bool)
 	}
 	if m.previewFailures == nil {
-		m.previewFailures = make(map[string]bool)
+		m.previewFailures = make(map[string]string)
 	}
 
 	available := limit - len(m.previewDownloads)
@@ -7422,7 +7597,7 @@ func (m *Model) queueInlineImagePreviews(limit int) tea.Cmd {
 			if err != nil {
 				continue
 			}
-			if _, err := os.Stat(cachePath); err == nil || m.previewDownloads[cachePath] || m.previewFailures[cachePath] {
+			if _, err := os.Stat(cachePath); err == nil || m.previewDownloads[cachePath] || m.previewFailures[cachePath] != "" {
 				continue
 			}
 			m.previewDownloads[cachePath] = true
@@ -7437,6 +7612,23 @@ func (m *Model) queueInlineImagePreviews(limit int) tea.Cmd {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func friendlyPreviewError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "http 403"), strings.Contains(message, "accessdenied"), strings.Contains(message, "access denied"):
+		return "file permission required — re-authenticate"
+	case strings.Contains(message, "http 404"), strings.Contains(message, "itemnotfound"):
+		return "file is no longer available"
+	case strings.Contains(message, "timeout"), strings.Contains(message, "deadline exceeded"):
+		return "download timed out"
+	default:
+		return "download failed"
+	}
 }
 
 func combineCommands(cmds ...tea.Cmd) tea.Cmd {

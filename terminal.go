@@ -10,6 +10,10 @@ const (
 	beginSynchronizedOutput = "\x1b[?2026h"
 	endSynchronizedOutput   = "\x1b[?2026l"
 	disableGraphemeClusters = "\x1b[?2027l"
+	// Ask Kitty-compatible terminals to disambiguate modified keys while
+	// leaving ordinary text input in its legacy form. Bubble Tea 1.x does not
+	// request this mode itself.
+	enableEnhancedKeyboard = "\x1b[>1u"
 )
 
 var terminalWriteMu sync.Mutex
