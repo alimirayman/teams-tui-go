@@ -225,6 +225,7 @@ Press `?` in the app for the contextual help popup.
 | `K` / `J`, `PgUp` / `PgDn` | Scroll the timeline |
 | `Ctrl+u` / `Ctrl+d` | Scroll half a page |
 | Mouse wheel | Scroll the active message timeline without changing the selected chat or channel |
+| `Shift` + mouse drag | Select part of the visible text using the terminal's native selection |
 | `m` | Enter message-selection mode |
 | `z` | Expand or collapse the message near the viewport |
 | `i` | Compose a message |
@@ -250,7 +251,7 @@ Press `?` in the app for the contextual help popup.
 | `v` | Open full message and attachment view |
 | `a` | Reply to the selected message or channel thread |
 | `r`, then `1`-`6` | Add a reaction |
-| `y` | Copy rendered message text |
+| `Cmd+C` / `y` | Copy the complete selected message, including rendered Teams card text |
 | `u` | Copy a URL; includes Adaptive Card links |
 | `o` | Open a URL; includes Adaptive Card links |
 | `e` / `d` | Edit or delete your own message |
@@ -258,6 +259,8 @@ Press `?` in the app for the contextual help popup.
 | `i` | Show sender profile |
 | `Ctrl+g` | Open the message read-only in the external editor |
 | `m` / `Esc` | Return to conversation mode |
+
+In Ghostty-backed terminals such as cmux, hold `Shift` while dragging to select only part of the visible text, then press `Cmd+C` to use the terminal's normal copy action. With no native terminal selection, `Cmd+C` is forwarded to `teams` and copies the whole message selected with `m`; `y` is the fallback if the terminal reserves `Cmd+C`.
 
 ### Compose Mode
 

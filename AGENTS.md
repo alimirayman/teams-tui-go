@@ -138,12 +138,13 @@ Do not silence a security scanner globally. A `#nosec` annotation is allowed onl
 - Read feature flags from `app.Features` inside the event loop.
 - The API returns messages newest-first; the timeline renders in reverse.
 - Mouse-wheel events always scroll the active message timeline and must never change chat or channel selection.
+- Preserve terminal-native partial text selection with `Shift`+drag. When a message is selected and the terminal forwards `Cmd+C`, copy the complete plain-text message; keep `y` as the fallback.
 - Modified compose shortcuts rely on the Kitty keyboard disambiguation flag. Push it from `Model.Init` after Bubble Tea enters the alternate screen; the terminal keeps a separate alt-screen keyboard stack and discards it on exit. Keep ordinary text input in legacy form.
 - Unicode width must use existing cell/grapheme helpers. Do not use byte length for layout.
 
 ### Files and Images
 
-- Clipboard access happens only after explicit paste actions.
+- Clipboard reads happen only after explicit paste actions; clipboard writes happen only after explicit copy actions.
 - File uploads happen only after explicit picker selection, paste, or drag/drop input.
 - The file picker is type-first: printable keys update its fuzzy filter and arrow keys navigate results.
 - Dotfiles and dot-directories are intentionally visible in the picker.

@@ -2,6 +2,17 @@
 
 All notable changes to `ms-teams-tui` are documented here. This project uses semantic versioning.
 
+## 0.6.0 - 2026-07-15
+
+### Added
+
+- Whole-message copying with `Cmd+C` in message-selection mode, the full-message popup, and history-search results. The existing `y` shortcut remains available as a terminal-independent fallback.
+- Partial visible-text copying through native terminal selection: hold `Shift` while dragging with the mouse, then use the terminal's normal `Cmd+C` shortcut.
+
+### Changed
+
+- Message copying now uses the complete plain-text rendering, including Teams card content that is not embedded directly in the HTML body.
+
 ## 0.5.0 - 2026-07-14
 
 ### Added

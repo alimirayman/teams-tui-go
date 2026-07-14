@@ -77,6 +77,13 @@ func (k kittyKeyEvent) isCommandImportant() bool {
 	return k.Code == '/'
 }
 
+func (k kittyKeyEvent) isCommandCopy() bool {
+	if k.EventType != 1 || k.Modifiers&kittyKeyModSuper == 0 {
+		return false
+	}
+	return k.Code == 'c' || k.Code == 'C'
+}
+
 func (k kittyKeyEvent) bubbleTeaKeyMsg() (tea.KeyMsg, bool) {
 	if k.EventType != 1 || k.Modifiers&kittyKeyModSuper != 0 {
 		return tea.KeyMsg{}, false

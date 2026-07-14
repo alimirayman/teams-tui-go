@@ -179,6 +179,9 @@ type MsgPreviewFinished struct {
 
 type msgComposeNewline struct{}
 type msgToggleImportant struct{}
+type msgCopySelectedMessage struct{}
+
+var clipboardWriteAll = clipboard.WriteAll
 
 type InlineImagePlacement struct {
 	CachePath string
@@ -465,7 +468,10 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 
 	if key, ok := parseKittyKeyEvent(msg); ok {
 		handled := false
-		if m.app.InputMode {
+		if key.isCommandCopy() && !m.app.InputMode && !m.app.SearchMode && !m.app.UserSearchMode {
+			msg = msgCopySelectedMessage{}
+			handled = true
+		} else if m.app.InputMode {
 			switch {
 			case key.isShiftEnter():
 				msg = msgComposeNewline{}
@@ -497,6 +503,24 @@ func (m Model) updateInternal(msg tea.Msg) (Model, tea.Cmd) {
 			m.app.SetStatus("Important message enabled", 2*time.Second)
 		} else {
 			m.app.SetStatus("Important message disabled", 2*time.Second)
+		}
+
+	case msgCopySelectedMessage:
+		switch {
+		case m.app.MessagePopupMode:
+			if index := m.app.MessageSelectedIndex; index >= 0 && index < len(m.app.Messages) {
+				m = m.copyMessageToClipboard(&m.app.Messages[index], false)
+			}
+		case m.app.MessageSelectionMode:
+			if index := m.app.MessageSelectedIndex; index >= 0 && index < len(m.app.Messages) {
+				m = m.copyMessageToClipboard(&m.app.Messages[index], false)
+			}
+		case m.app.SearchPopupMode && !m.app.SearchMode:
+			if index := m.app.SearchPopupSelectedIndex; index >= 0 && index < len(m.app.SearchPopupResults) {
+				m = m.copyMessageToClipboard(&m.app.SearchPopupResults[index].Message, true)
+			}
+		default:
+			m.app.SetStatus("Select a message with m, then press Cmd+C", 4*time.Second)
 		}
 
 	// ── Window resize ────────────────────────────────────────────────────
@@ -1865,6 +1889,34 @@ func (m Model) toggleMessageExpanded(index int) Model {
 	return m
 }
 
+func copyableMessageText(message *Message) string {
+	if message == nil {
+		return ""
+	}
+	return strings.TrimSpace(stripANSI(message.GetPlainText()))
+}
+
+func (m Model) copyMessageToClipboard(message *Message, searchStatus bool) Model {
+	text := copyableMessageText(message)
+	status := func(message string, duration time.Duration) {
+		if searchStatus {
+			m.app.SetSearchStatus(message, duration)
+			return
+		}
+		m.app.SetStatus(message, duration)
+	}
+	if text == "" {
+		status("Message has no copyable text", 3*time.Second)
+		return m
+	}
+	if err := clipboardWriteAll(text); err != nil {
+		status("Clipboard error: "+err.Error(), 5*time.Second)
+		return m
+	}
+	status("Whole message copied to clipboard", 3*time.Second)
+	return m
+}
+
 func (m Model) handleNormalModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.app.DeleteConfirmMode {
 		return m.handleDeleteConfirmModeKey(msg)
@@ -2604,6 +2656,12 @@ func (m Model) handleMessagePopupKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case "y":
+		if index := m.app.MessageSelectedIndex; index >= 0 && index < len(m.app.Messages) {
+			m = m.copyMessageToClipboard(&m.app.Messages[index], false)
+		}
+		return m, nil
+
 	case "ctrl+g":
 		if m.app.MessageSelectedIndex < len(m.app.Messages) {
 			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
@@ -2769,16 +2827,8 @@ func (m Model) handleMessageSelectionModeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case "y":
-		if m.app.MessageSelectedIndex < len(m.app.Messages) {
-			msgObj := m.app.Messages[m.app.MessageSelectedIndex]
-			if msgObj.Body != nil && msgObj.Body.Content != nil {
-				text := stripANSI(HTMLToText(*msgObj.Body.Content, msgObj.Attachments, msgObj.Mentions))
-				if err := clipboard.WriteAll(text); err == nil {
-					m.app.SetStatus("Message copied to clipboard", 3*time.Second)
-				} else {
-					m.app.SetStatus("Clipboard error: "+err.Error(), 5*time.Second)
-				}
-			}
+		if index := m.app.MessageSelectedIndex; index >= 0 && index < len(m.app.Messages) {
+			m = m.copyMessageToClipboard(&m.app.Messages[index], false)
 			m.app.MessageSelectionMode = false
 		}
 		return m, nil
@@ -4481,20 +4531,20 @@ func (m Model) statusHint() string {
 	case m.app.UserProfilePopupMode:
 		return "Profile: q/Esc close"
 	case m.app.MessagePopupMode:
-		return "Message: j/k next, J/K scroll, Tab attachments, q/Esc close"
+		return "Message: j/k next, J/K scroll, y/Cmd+C copy, Tab attachments, q/Esc close"
 	case m.app.InputMode:
 		return "Compose: Enter send, Shift+Enter newline, Cmd+/ Important, Cmd/Ctrl+V paste, Ctrl+f file, Esc cancel"
 	case m.app.UserSearchPopupMode:
 		return "Find chat: type, j/k move, Enter open, Esc close"
 	case m.app.SearchPopupMode:
-		return "Search: type/Enter, j/k results, y copy, o open, Esc close"
+		return "Search: type/Enter, j/k results, y/Cmd+C copy, o open, Esc close"
 	case m.app.UrlSelectionMode:
 		if m.app.UrlSelectionOpenMode {
 			return "Open URL: j/k move, Enter open, Esc cancel"
 		}
 		return "Copy URL: j/k move, Enter copy, Esc cancel"
 	case m.app.MessageSelectionMode:
-		return "MESSAGES  j/k move  z/Enter expand  v full  a reply  r react  y copy  m/Esc back"
+		return "MESSAGES  j/k move  z/Enter expand  v full  a reply  r react  y/Cmd+C copy  m/Esc back"
 	case m.app.SelectedIndex < 0 && m.channelSelectedIndex < 0:
 		return "Sleep: j/k select, h/? help, q quit"
 	case m.channelSelectedIndex >= 0:
@@ -5784,16 +5834,8 @@ func (m Model) handleSearchPopupNavigationKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case "y":
-		if len(m.app.SearchPopupResults) > 0 && m.app.SearchPopupSelectedIndex < len(m.app.SearchPopupResults) {
-			msgObj := m.app.SearchPopupResults[m.app.SearchPopupSelectedIndex].Message
-			if msgObj.Body != nil && msgObj.Body.Content != nil {
-				text := stripANSI(HTMLToText(*msgObj.Body.Content, msgObj.Attachments, msgObj.Mentions))
-				if err := clipboard.WriteAll(text); err == nil {
-					m.app.SetSearchStatus("Message copied to clipboard", 3*time.Second)
-				} else {
-					m.app.SetSearchStatus("Clipboard error: "+err.Error(), 5*time.Second)
-				}
-			}
+		if index := m.app.SearchPopupSelectedIndex; index >= 0 && index < len(m.app.SearchPopupResults) {
+			m = m.copyMessageToClipboard(&m.app.SearchPopupResults[index].Message, true)
 		}
 	case "enter":
 		if len(m.app.SearchPopupResults) > 0 && m.app.SearchPopupSelectedIndex < len(m.app.SearchPopupResults) {
@@ -6905,6 +6947,7 @@ func (m Model) getHelpContentLines() []string {
 			{"m", "Enter message selection mode"},
 			{"z", "Expand/collapse the message near the viewport"},
 			{"Mouse wheel", "Scroll active messages without changing conversation"},
+			{"Shift+drag", "Select partial visible text with the terminal"},
 			{"Ctrl+u / Ctrl+d", "Scroll messages by half a page"},
 			{"v", "Preview the newest image in loaded messages"},
 			{"i", "Compose new message"},
@@ -6924,7 +6967,7 @@ func (m Model) getHelpContentLines() []string {
 			{"g / G", "Jump to oldest / newest message"},
 			{"z / Enter", "Expand or collapse selected message"},
 			{"v", "View message popup"},
-			{"y", "Yank message to clipboard"},
+			{"Cmd+C / y", "Copy the complete selected message"},
 			{"u", "Extract URLs"},
 			{"o", "Open URLs"},
 			{"r", "React to message"},
@@ -6939,6 +6982,7 @@ func (m Model) getHelpContentLines() []string {
 		{"Message View Popup (v)", [][2]string{
 			{"j / k", "Navigate to next/prev message"},
 			{"J / K", "Scroll message body"},
+			{"Cmd+C / y", "Copy the complete message"},
 			{"Tab", "Switch to attachment cursor mode"},
 			{"Enter", "Download selected attachment (feature: file_preview_enabled)"},
 			{"ESC / q / v", "Close popup"},
@@ -6946,7 +6990,7 @@ func (m Model) getHelpContentLines() []string {
 		{"History Search (/)", [][2]string{
 			{"Enter", "Submit query / focus results / Expand context"},
 			{"j / k", "Navigate results"},
-			{"y", "Yank selected message"},
+			{"Cmd+C / y", "Copy the complete selected message"},
 			{"u", "Extract URLs"},
 			{"o", "Open URLs"},
 			{"ESC", "Close search popup"},

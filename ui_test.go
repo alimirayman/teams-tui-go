@@ -253,6 +253,57 @@ func TestEnhancedComposeShortcutsInsertNewlinesAndToggleImportance(t *testing.T)
 	}
 }
 
+func TestCommandCopyCopiesWholeSelectedMessage(t *testing.T) {
+	originalWrite := clipboardWriteAll
+	defer func() { clipboardWriteAll = originalWrite }()
+
+	copied := ""
+	clipboardWriteAll = func(text string) error {
+		copied = text
+		return nil
+	}
+
+	body := "<p>Hello <strong>team</strong>.</p><p>Second line.</p>"
+	app := NewApp()
+	app.Messages = []Message{{
+		ID:   "message-id",
+		Body: &MessageBody{Content: &body},
+	}}
+	app.MessageSelectionMode = true
+	app.MessageSelectedIndex = 0
+	model := NewModel(app, "client-id", "user-id")
+
+	next, _ := model.updateInternal(testCSISequence("\x1b[99;9u"))
+	if copied != "Hello team.\nSecond line." {
+		t.Fatalf("Cmd+C copied %q", copied)
+	}
+	if !next.app.MessageSelectionMode {
+		t.Fatal("Cmd+C unexpectedly exited message-selection mode")
+	}
+	if next.app.Status != "Whole message copied to clipboard" {
+		t.Fatalf("copy status = %q", next.app.Status)
+	}
+}
+
+func TestCopyableMessageTextIncludesDetachedCard(t *testing.T) {
+	body := ""
+	contentType := "application/vnd.microsoft.card.adaptive"
+	content := `{"type":"AdaptiveCard","body":[{"type":"TextBlock","text":"Deployment approved"}]}`
+	message := Message{
+		ID:   "card-message",
+		Body: &MessageBody{Content: &body},
+		Attachments: []MessageAttachment{{
+			ID:          "card-id",
+			ContentType: &contentType,
+			Content:     &content,
+		}},
+	}
+
+	if got := copyableMessageText(&message); got != "Deployment approved" {
+		t.Fatalf("copyable card text = %q", got)
+	}
+}
+
 func TestKittyKeyEventConvertsLegacyControlKeys(t *testing.T) {
 	event, ok := parseKittyKeyEvent(testCSISequence("\x1b[99;5u"))
 	if !ok {
